@@ -40,3 +40,20 @@ Record all data on all topics:
 ```shell
 ros2 bag record -a
 ```
+
+## Playback data
+
+```shell
+ros2 bag play data/BAG_NAME/ -l --clock
+```
+
+And start RVIZ2:
+
+```shell
+rviz2 --ros-args -p use_sim_time:=true
+```
+
+Remember to set
+
+- global frame to `laser`
+- reliability to `best effort`
