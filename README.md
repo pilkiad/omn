@@ -10,25 +10,25 @@ First log into the WIFI `lispcourse` with password `turtlesalltheway`.
 
 Then connect to the turtle using:
 
-´´´shell
+```shell
 ssh roscourse@10.0.1.35
 byobu
-´´´
+```
 
 And upload files using:
 
-´´´shell
+```shell
 scp -r /directory roscourse@10.0.1.35:~/Documents/
-´´´
+```
 
 ## Record data
 
 Record specific topis:
-´´´shell
+```shell
 ros2 bag record --topics /topic1 /topic2
-´´´
+```
 
 Record all data on all topics:
-´´´shell
+```shell
 ros2 bag record -a
-´´´
+```
