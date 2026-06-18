@@ -12,10 +12,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import TwistStamped
-from irobot_create_msgs.msg import DockStatus, HazardDetectionVector
-
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from geometry_msgs.msg import Twist
 
 import math
 import random
@@ -44,7 +41,7 @@ class Exploration(Node):
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
-        self.publisher = self.create_publisher(TwistStamped, "/cmd_vel", 1)
+        self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
 
     def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
@@ -106,9 +103,7 @@ class Exploration(Node):
         self.target_vector = [self.target_vector[0] + self.drift[0], self.target_vector[1] + self.drift[1]]
 
     def timer_callback(self):
-        msg = TwistStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = ""
+        msg = Twist()
 
         # Shuffle the drift every now and then
         self.drift_shuffle_c += 1
@@ -118,8 +113,8 @@ class Exploration(Node):
             self.get_logger().info(f"recalc drift")
 
         # Move according to target vector
-        msg.twist.linear.x = self.target_vector[0]
-        msg.twist.angular.z = -self.target_vector[1]
+        msg.linear.x = self.target_vector[0]
+        msg.angular.z = -self.target_vector[1]
 
         # Publish
         self.publisher.publish(msg)
