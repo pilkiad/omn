@@ -33,7 +33,7 @@ class Exploration(Node):
         self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
         self.DAMPING_MULTIPLIER = [ 0.008, 0.008 ]  # How much obstacle detection should change the target direction (linear, angular)
         self.DEFAULT_TARGET_VECTOR = [ 0.1, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
-        self.DRIFT_MAX = 0.025                      # Maximum random drift (offset from default target vector)
+        self.DRIFT_MAX = [ 0.025, 0.5 ]             # Maximum random drift (offset from default target vector)
         self.DRIFT_SHUFFLE_MAX_TIME = 30            # Num. movement commands before recalculating random drift
 
         # Prepare some default values
@@ -120,7 +120,7 @@ class Exploration(Node):
         self.drift_shuffle_c += 1
         if self.drift_shuffle_c > self.DRIFT_SHUFFLE_MAX_TIME:
             self.drift_shuffle_c = 0
-            self.drift = [random.random()*(self.DRIFT_MAX*2)-self.DRIFT_MAX, random.random()*(self.DRIFT_MAX*2)-self.DRIFT_MAX]
+            self.drift = [random.random()*(self.DRIFT_MAX[0]*2)-self.DRIFT_MAX[0], random.random()*(self.DRIFT_MAX[1]*2)-self.DRIFT_MAX[1]]
             self.get_logger().info(f"recalc drift")
 
         # Move according to target vector
