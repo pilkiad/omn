@@ -6,6 +6,7 @@ import numpy as np
 import os
 from collections import deque
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 class CubeFollowerNode(Node):
     def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'tracking_performance.png'):
@@ -25,15 +26,11 @@ class CubeFollowerNode(Node):
 
         # Debugging video
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.video_writer = cv2.VideoWriter(self.video_path, fourcc, 20.0, (self.frame_width, self.frame_height))
+        self.video_writer = cv2.VideoWriter(str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height))
 
         # Timer (20 HZ)
         timer_period = 0.05
         self.timer = self.create_timer(timer_period, self.process_image_loop)
-
-        # HSV-Values Orange
-        self.lower_orange = np.array([0, 140, 80])
-        self.upper_orange = np.array([14, 255, 255])
 
         # Roationscaler
         self.screen_center_x = self.frame_width / 2.0
@@ -66,27 +63,28 @@ class CubeFollowerNode(Node):
         self.start_time = self.get_clock().now()
 
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
-        lower_red1 = np.array([0, 170, 70])
-        upper_red1 = np.array([22, 255, 255])
+        # Optimierte Rot-Filterung aus dem Tuner (Beide Enden des HSV-Kreises)
+        lower_red1 = np.array([0, 100, 45])
+        upper_red1 = np.array([22, 255, 255])  # Angepasst auf deine 45° (OpenCV-Hue 22)
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-        lower_red2 = np.array([157, 170, 70])
+        lower_red2 = np.array([157, 100, 45]) # Spiegelung: 179 - 22
         upper_red2 = np.array([179, 255, 255])
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
 
         mask = cv2.bitwise_or(mask1, mask2)
 
-        kernel = np.ones((5, 5), np.uint8)
-        #mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        #mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        # Morphologisches Schließen füllt Löcher im blutroten Würfel
+        kernel = np.ones((7, 7), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return mask
 
-    def calculate_speed(self, x: int, w: int,) -> tuple[float, float]:
+    def calculate_speed(self, x: int, w: int) -> tuple[float, float]:
         """
         Calculates the linear and angular speeds based on the target position and area.
         :return: Tuple containing (linear_speed, angular_speed)
         """
-        # Rotation
+        # Rotation (Nutzt jetzt sauber die gefilterte Position!)
         error_x : float = self.screen_center_x - self.last_cx
         angular_speed: float = error_x * self.angular_gain
 
@@ -101,20 +99,27 @@ class CubeFollowerNode(Node):
 
         return linear_speed, angular_speed
 
-    def update_target_position_and_area(self, x: float, w: float, current_area: float) -> None :
+    def update_target_position_and_area(self, x: float, w: float, current_area: float) -> tuple[float, float]:
         raw_cx = x + (w / 2.0)
 
-        if self.last_area > 5000 and current_area < (self.last_area * self.max_area_drop_ratio):
-            # Gating
+        # FIX: Fall 1 - Wenn der Würfel neu im Bild erscheint, Filter überspringen
+        if self.last_area < 500:
+            target_cx = raw_cx
+            target_area = current_area
+
+        # FIX: Fall 2 - Gating greift NUR bei unplausibel heftigen Einbrüchen nach unten
+        elif current_area < (self.last_area * self.max_area_drop_ratio):
             target_cx = self.last_cx
             target_area = self.last_area
+
+        # FIX: Fall 3 - Normalbetrieb oder Flächenzunahme (wird sofort akzeptiert & geglättet)
         else:
-            # Smoothing
             target_cx = self.alpha_position * raw_cx + (1 - self.alpha_position) * self.last_cx
             target_area = self.alpha_area * current_area + (1 - self.alpha_area) * self.last_area
 
         self.last_cx = target_cx
         self.last_area = target_area
+        return target_cx, target_area
 
     def process_image_loop(self) -> None:
         ret, frame = self.cap.read()
@@ -142,7 +147,8 @@ class CubeFollowerNode(Node):
 
             if current_area > 500:
                 x, y, w, h = cv2.boundingRect(largest_contour)
-                self.update_target_position_and_area(x, w, current_area)
+                # Holt sich die gefilterten Werte zurück
+                _, target_area = self.update_target_position_and_area(x, w, current_area)
                 linear_speed, angular_speed = self.calculate_speed(x, w)
 
                 # Draw
@@ -152,9 +158,11 @@ class CubeFollowerNode(Node):
             else:
                 self.last_area *= 0.5
                 target_area = self.last_area
+                self.last_cx = self.screen_center_x # Setzt Rotation im Verlustfall zurück
         else:
             self.last_area *= 0.5
             target_area = self.last_area
+            self.last_cx = self.screen_center_x # Setzt Rotation im Verlustfall zurück
 
         elapsed_time = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
 
@@ -170,7 +178,7 @@ class CubeFollowerNode(Node):
         msg = Twist()
         msg.linear.x = linear_speed
         msg.angular.z = angular_speed
-        self.publisher_.publish(msg)
+        # self.publisher_.publish(msg)
         self.get_logger().info(f"Send: Linear={linear_speed:.2f}, Angular={angular_speed:.2f}")
 
         cv2.imshow("Cube Tracking", frame)
@@ -259,7 +267,7 @@ def run_hsv_tuner() -> None:
         # Live-Anzeige (Oben: Reine Maske, Unten: Nach Morphologie)
         cv2.imshow("Tuner", np.hstack([mask, mask_closed]))
 
-        if cv2.waitKey(1):
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             print("\n--- DEINE OPTIMALEN WERTE FÜR DEN CODE: ---")
             print(f"lower_red1 = np.array([0, {s_min}, {v_min}])")
             print(f"upper_red1 = np.array([{h_range}, {s_max}, {v_max}])")
@@ -271,18 +279,18 @@ def run_hsv_tuner() -> None:
     cv2.destroyAllWindows()
 
 def main(args=None):
-    #run_hsv_tuner()
-    #exit()
-
     rclpy.init(args=args)
     node = CubeFollowerNode()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
