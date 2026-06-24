@@ -21,17 +21,19 @@ class Exploration(Node):
     def __init__(self):
         super().__init__("exploration")
 
+        self.unlock_driving = False
+
         # Behavioural constants
-        self.MAX_SENSOR_RANGE = 1.0                 # Maximum obstacle distance that robot will alter curse
+        self.MAX_SENSOR_RANGE = 0.75                # Maximum obstacle distance that robot will alter curse
         self.WALL_HUG_RANGE = [                     # Range at which obstacle is considered ideally position and should be "hugged"
-            self.MAX_SENSOR_RANGE * 0.25,           # ... min
-            self.MAX_SENSOR_RANGE * 2.0             # ... max
+            self.MAX_SENSOR_RANGE * 0.75,           # ... min
+            self.MAX_SENSOR_RANGE * 1.25            # ... max
         ]
-        self.WALL_HUG_STRENGTH = 0.3                # Angular strength used for turning
-        self.WALL_HUG_MIN_LINEAR_SPEED = 0.1        # How fast the robot needs to be in order to wall hug
-        self.DAMPING_MULTIPLIER = [ 0.2, 0.5 ]      # How much obstacle detection should change the target direction (linear, angular)
-        self.DEFAULT_TARGET_VECTOR = [ 0.2, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
-        self.DRIFT_MAX = 0.05                       # Maximum random drift (offset from default target vector)
+        self.WALL_HUG_STRENGTH = 0.1                # Angular strength used for turning
+        self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
+        self.DAMPING_MULTIPLIER = [ 0.008, 0.008 ]  # How much obstacle detection should change the target direction (linear, angular)
+        self.DEFAULT_TARGET_VECTOR = [ 0.1, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
+        self.DRIFT_MAX = [ 0.025, 0.5 ]             # Maximum random drift (offset from default target vector)
         self.DRIFT_SHUFFLE_MAX_TIME = 30            # Num. movement commands before recalculating random drift
 
         # Prepare some default values
@@ -55,8 +57,10 @@ class Exploration(Node):
         return [origin[0]+dx, origin[1]+dy]
 
     def scan_callback(self, msg):
+        self.unlock_driving = True
+
         # Define movement vector with a bias for going forward
-        self.target_vector = self.DEFAULT_TARGET_VECTOR
+        self.target_vector = self.DEFAULT_TARGET_VECTOR.copy()
         # For simplicity consider the robot to be at coordinate center
         center_point = [0.0, 0.0]
 
@@ -67,7 +71,7 @@ class Exploration(Node):
         # Define range of angles we are interested in
         # (left is -90, forward is 0, right is 90)
         interesting_angles = []
-        for a in range(-90, 90, 10):
+        for a in range(-90, 90, 2):
             interesting_angles.append(a)
 
         for i, r in enumerate(msg.ranges):
@@ -75,7 +79,11 @@ class Exploration(Node):
             a = round(math.degrees(msg.angle_min + (i * msg.angle_increment)))
 
             # Ignore every angle outside forward vision cone
-            if a not in interesting_angles:
+            angle_found = False
+            for interesting_angle in interesting_angles:
+                if a < (interesting_angle + 1) and a > (interesting_angle - 1):
+                    angle_found = True
+            if not angle_found:
                 continue
 
             # If there is an obstacle at the angle
@@ -83,8 +91,8 @@ class Exploration(Node):
                 # Get vector pointing away from obstacle a inverse distance (gets further away the close the obstacle is)
                 correction_point = self.get_point(center_point, a-180, self.MAX_SENSOR_RANGE - r)
                 # Move our target movement vector by the offset we just calculated, apply damping per axis
-                self.target_vector[0] -= correction_point[0] * self.DAMPING_MULTIPLIER[0]
-                self.target_vector[1] -= correction_point[1] * self.DAMPING_MULTIPLIER[1]
+                self.target_vector[0] += correction_point[0] * self.DAMPING_MULTIPLIER[0]
+                self.target_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
 
             # Check if a wall is close enough left/right to start hugging it
             if a == 80 and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
@@ -105,20 +113,23 @@ class Exploration(Node):
     def timer_callback(self):
         msg = Twist()
 
+        if not self.unlock_driving:
+            self.get_logger().info(f"Can't drive, no sensor info received")
+
         # Shuffle the drift every now and then
         self.drift_shuffle_c += 1
         if self.drift_shuffle_c > self.DRIFT_SHUFFLE_MAX_TIME:
             self.drift_shuffle_c = 0
-            self.drift = [random.random()*(self.DRIFT_MAX*2)-self.DRIFT_MAX, random.random()*(self.DRIFT_MAX*2)-self.DRIFT_MAX]
+            self.drift = [random.random()*(self.DRIFT_MAX[0]*2)-self.DRIFT_MAX[0], random.random()*(self.DRIFT_MAX[1]*2)-self.DRIFT_MAX[1]]
             self.get_logger().info(f"recalc drift")
 
         # Move according to target vector
         msg.linear.x = self.target_vector[0]
-        msg.angular.z = -self.target_vector[1]
+        msg.angular.z = self.target_vector[1]
 
         # Publish
         self.publisher.publish(msg)
-        self.get_logger().info(f"target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}")
+        self.get_logger().info(f"(b5) target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}")
 
 def main():
     rclpy.init()
@@ -128,7 +139,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        stop_msg = TwistStamped()
+        stop_msg = Twist()
         forwardScan.publisher.publish(stop_msg)
         forwardScan.destroy_node()
         rclpy.shutdown()
