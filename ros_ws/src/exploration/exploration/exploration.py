@@ -24,22 +24,26 @@ class Exploration(Node):
         self.unlock_driving = False
 
         # Behavioural constants
-        self.MAX_SENSOR_RANGE = 0.75                # Maximum obstacle distance that robot will alter curse
+        self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
         self.WALL_HUG_RANGE = [                     # Range at which obstacle is considered ideally position and should be "hugged"
             self.MAX_SENSOR_RANGE * 0.75,           # ... min
-            self.MAX_SENSOR_RANGE * 1.25            # ... max
+            self.MAX_SENSOR_RANGE * 1.1            # ... max
         ]
         self.WALL_HUG_STRENGTH = 0.1                # Angular strength used for turning
         self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
-        self.DAMPING_MULTIPLIER = [ 0.008, 0.008 ]  # How much obstacle detection should change the target direction (linear, angular)
+        self.DAMPING_MULTIPLIER = [ 0.02, 0.02 ]  # How much obstacle detection should change the target direction (linear, angular)
         self.DEFAULT_TARGET_VECTOR = [ 0.1, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
-        self.DRIFT_MAX = [ 0.025, 0.5 ]             # Maximum random drift (offset from default target vector)
-        self.DRIFT_SHUFFLE_MAX_TIME = 30            # Num. movement commands before recalculating random drift
+        self.DRIFT_MAX = [ 0.05, 0.08 ]             # Maximum random drift (offset from default target vector)
+        self.DRIFT_SHUFFLE_MAX_TIME = 15            # Num. movement commands before recalculating random drift
 
         # Prepare some default values
         self.target_vector = self.DEFAULT_TARGET_VECTOR
         self.drift = [0.0,0.0]
         self.drift_shuffle_c = 0
+        self.no_drift_counter = 0
+        self.stuck_counter = 0
+        self.unstuck_counter = 0
+        self.unstuck_spin_direction = 0.5
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
@@ -71,7 +75,7 @@ class Exploration(Node):
         # Define range of angles we are interested in
         # (left is -90, forward is 0, right is 90)
         interesting_angles = []
-        for a in range(-90, 90, 2):
+        for a in range(-70, 70, 2):
             interesting_angles.append(a)
 
         for i, r in enumerate(msg.ranges):
@@ -83,11 +87,9 @@ class Exploration(Node):
             for interesting_angle in interesting_angles:
                 if a < (interesting_angle + 1) and a > (interesting_angle - 1):
                     angle_found = True
-            if not angle_found:
-                continue
 
             # If there is an obstacle at the angle
-            if r < self.MAX_SENSOR_RANGE:
+            if r < self.MAX_SENSOR_RANGE and angle_found:
                 # Get vector pointing away from obstacle a inverse distance (gets further away the close the obstacle is)
                 correction_point = self.get_point(center_point, a-180, self.MAX_SENSOR_RANGE - r)
                 # Move our target movement vector by the offset we just calculated, apply damping per axis
@@ -95,20 +97,39 @@ class Exploration(Node):
                 self.target_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
 
             # Check if a wall is close enough left/right to start hugging it
-            if a == 80 and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
+            if (a >= 70 and a <= 110) and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
                 right_wall = True
-            if a == 10 and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
+            if (a >= -110 and a <= 70) and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
                 left_wall = True
 
         # Initiate wall hug if sufficient speed is present
         # (do it outside the loop since linear velocity needs to be completely calculated to know how fast we are going)
         if left_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED:
             self.target_vector[1] -= self.WALL_HUG_STRENGTH
+            self.no_drift_counter = 50
         if right_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED:
             self.target_vector[1] += self.WALL_HUG_STRENGTH
+            self.no_drift_counter = 50
+        if self.no_drift_counter > 0:
+            self.no_drift_counter = self.no_drift_counter - 1
 
         # Apply random drift to target vector
-        self.target_vector = [self.target_vector[0] + self.drift[0], self.target_vector[1] + self.drift[1]]
+        if not left_wall and not right_wall and self.no_drift_counter <= 0:
+            self.target_vector = [self.target_vector[0] + self.drift[0], self.target_vector[1] + self.drift[1]]
+
+        if (abs(self.target_vector[0]) + abs(self.target_vector[1])) < 0.01:
+            self.stuck_counter = self.stuck_counter + 1
+        else:
+            self.stuck_counter = 0
+
+        if self.stuck_counter > 100:
+            self.unstuck_counter = 150
+        if self.unstuck_counter > 0:
+            self.unstuck_counter = self.unstuck_counter - 1
+            self.target_vector[1] = self.unstuck_spin_direction
+            self.target_vector[0] = 0.0
+        else:
+            self.unstuck_spin_direction = random.choice([-0.5, 0.5])
 
     def timer_callback(self):
         msg = Twist()
@@ -129,7 +150,7 @@ class Exploration(Node):
 
         # Publish
         self.publisher.publish(msg)
-        self.get_logger().info(f"(b5) target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}")
+        self.get_logger().info(f"(b100) target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}, s={self.stuck_counter}")
 
 def main():
     rclpy.init()
