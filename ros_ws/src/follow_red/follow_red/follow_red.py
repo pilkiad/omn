@@ -37,9 +37,9 @@ class CubeFollowerNode(Node):
         self.angular_gain = 0.002
 
         # Forward speedscaler
-        self.target_area = 25000.0   # Nearest Cube position
+        self.target_area = 20000.0   # Nearest Cube position
         self.linear_gain = 0.00001
-        self.max_linear_speed = 0.5
+        self.max_linear_speed = 1.0
 
         self.get_logger().info('Cube Follower Node started...')
 
@@ -65,10 +65,10 @@ class CubeFollowerNode(Node):
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
         # Optimierte Rot-Filterung aus dem Tuner (Beide Enden des HSV-Kreises)
         lower_red1 = np.array([0, 100, 45])
-        upper_red1 = np.array([22, 255, 255])  # Angepasst auf deine 45° (OpenCV-Hue 22)
+        upper_red1 = np.array([5, 255, 255])  # Angepasst auf deine 45° (OpenCV-Hue 22)
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-        lower_red2 = np.array([157, 100, 45]) # Spiegelung: 179 - 22
+        lower_red2 = np.array([174, 100, 45]) # Spiegelung: 179 - 22
         upper_red2 = np.array([179, 255, 255])
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
 
@@ -81,23 +81,44 @@ class CubeFollowerNode(Node):
 
     def calculate_speed(self, x: int, w: int) -> tuple[float, float]:
         """
-        Calculates the linear and angular speeds based on the target position and area.
-        :return: Tuple containing (linear_speed, angular_speed)
+        Calculates smoothly scaled linear and angular speeds.
         """
-        # Rotation (Nutzt jetzt sauber die gefilterte Position!)
-        error_x : float = self.screen_center_x - self.last_cx
+        # 1. Rotation
+        error_x: float = self.screen_center_x - self.last_cx
         angular_speed: float = error_x * self.angular_gain
 
-        # Forward speed
-        touches_wall: bool = (x <= 2) or ((x + w) >= (self.frame_width - 2))
+        # 2. Basis-Vorwärtsgeschwindigkeit
         error_area: float = self.target_area - self.last_area
-        linear_speed: float = 0.0
+        base_linear_speed = 0.0
 
-        if abs(error_x) < 60 and not touches_wall and error_area > 0:
-            linear_speed = error_area * self.linear_gain
-            linear_speed = min(linear_speed, self.max_linear_speed)
+        if error_area > 0:
+            base_linear_speed = error_area * self.linear_gain
+            base_linear_speed = min(base_linear_speed, self.max_linear_speed)
 
-        return linear_speed, angular_speed
+        # 3. WEICHE BREMSE (Scaling Factor):
+        max_allowed_error = 100.0  # Erhöht von 60, da wir jetzt weich ausblenden!
+
+        # Berechne den Skalierungsfaktor zwischen 0.0 und 1.0
+        scaling_factor = 1.0 - (min(abs(error_x), max_allowed_error) / max_allowed_error)
+
+        # Sicherheitsstopp, wenn die Wand berührt wird
+        touches_wall: bool = (x <= 2) or ((x + w) >= (self.frame_width - 2))
+        if touches_wall:
+            scaling_factor = 0.0
+
+        # Berechne die gewünschte lineare Geschwindigkeit für diesen Frame
+        target_linear_speed = base_linear_speed * scaling_factor
+
+        # 4. STOSSDÄMPFER FÜR DIE MOTOREN (Geschwindigkeitsglättung)
+        # Verhindert, dass der Roboter beim plötzlichen Verlust abrupt stoppt.
+        alpha_speed = 0.30  # Wie schnell die Motoren auf Änderungen reagieren dürfen
+
+        # Wir holen uns die echte aktuelle Geschwindigkeit (falls vorhanden) oder nutzen das Letzte aus der Liste
+        last_sent_linear = self.linear_speeds[-1] if self.linear_speeds else 0.0
+
+        smoothed_linear_speed = alpha_speed * target_linear_speed + (1 - alpha_speed) * last_sent_linear
+
+        return smoothed_linear_speed, angular_speed
 
     def update_target_position_and_area(self, x: float, w: float, current_area: float) -> tuple[float, float]:
         raw_cx = x + (w / 2.0)
@@ -178,7 +199,7 @@ class CubeFollowerNode(Node):
         msg = Twist()
         msg.linear.x = linear_speed
         msg.angular.z = angular_speed
-        # self.publisher_.publish(msg)
+        self.publisher_.publish(msg)
         self.get_logger().info(f"Send: Linear={linear_speed:.2f}, Angular={angular_speed:.2f}")
 
         cv2.imshow("Cube Tracking", frame)
