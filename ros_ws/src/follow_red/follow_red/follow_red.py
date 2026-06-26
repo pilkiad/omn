@@ -6,6 +6,7 @@ import numpy as np
 import os
 from collections import deque
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 class CubeFollowerNode(Node):
     def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'tracking_performance.png'):
@@ -25,24 +26,20 @@ class CubeFollowerNode(Node):
 
         # Debugging video
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.video_writer = cv2.VideoWriter(self.video_path, fourcc, 20.0, (self.frame_width, self.frame_height))
+        self.video_writer = cv2.VideoWriter(str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height))
 
         # Timer (20 HZ)
         timer_period = 0.05
         self.timer = self.create_timer(timer_period, self.process_image_loop)
-
-        # HSV-Values Orange
-        self.lower_orange = np.array([0, 140, 80])
-        self.upper_orange = np.array([14, 255, 255])
 
         # Roationscaler
         self.screen_center_x = self.frame_width / 2.0
         self.angular_gain = 0.002
 
         # Forward speedscaler
-        self.target_area = 25000.0   # Nearest Cube position
+        self.target_area = 20000.0   # Nearest Cube position
         self.linear_gain = 0.00001
-        self.max_linear_speed = 0.5
+        self.max_linear_speed = 1.0
 
         self.get_logger().info('Cube Follower Node started...')
 
@@ -66,55 +63,84 @@ class CubeFollowerNode(Node):
         self.start_time = self.get_clock().now()
 
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
-        lower_red1 = np.array([0, 170, 70])
-        upper_red1 = np.array([22, 255, 255])
+        # Optimierte Rot-Filterung aus dem Tuner (Beide Enden des HSV-Kreises)
+        lower_red1 = np.array([0, 100, 45])
+        upper_red1 = np.array([5, 255, 255])  # Angepasst auf deine 45° (OpenCV-Hue 22)
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-        lower_red2 = np.array([157, 170, 70])
+        lower_red2 = np.array([174, 100, 45]) # Spiegelung: 179 - 22
         upper_red2 = np.array([179, 255, 255])
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
 
         mask = cv2.bitwise_or(mask1, mask2)
 
-        kernel = np.ones((5, 5), np.uint8)
-        #mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        #mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        # Morphologisches Schließen füllt Löcher im blutroten Würfel
+        kernel = np.ones((7, 7), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         return mask
 
-    def calculate_speed(self, x: int, w: int,) -> tuple[float, float]:
+    def calculate_speed(self, x: int, w: int) -> tuple[float, float]:
         """
-        Calculates the linear and angular speeds based on the target position and area.
-        :return: Tuple containing (linear_speed, angular_speed)
+        Calculates smoothly scaled linear and angular speeds.
         """
-        # Rotation
-        error_x : float = self.screen_center_x - self.last_cx
+        # 1. Rotation
+        error_x: float = self.screen_center_x - self.last_cx
         angular_speed: float = error_x * self.angular_gain
 
-        # Forward speed
-        touches_wall: bool = (x <= 2) or ((x + w) >= (self.frame_width - 2))
+        # 2. Basis-Vorwärtsgeschwindigkeit
         error_area: float = self.target_area - self.last_area
-        linear_speed: float = 0.0
+        base_linear_speed = 0.0
 
-        if abs(error_x) < 60 and not touches_wall and error_area > 0:
-            linear_speed = error_area * self.linear_gain
-            linear_speed = min(linear_speed, self.max_linear_speed)
+        if error_area > 0:
+            base_linear_speed = error_area * self.linear_gain
+            base_linear_speed = min(base_linear_speed, self.max_linear_speed)
 
-        return linear_speed, angular_speed
+        # 3. WEICHE BREMSE (Scaling Factor):
+        max_allowed_error = 100.0  # Erhöht von 60, da wir jetzt weich ausblenden!
 
-    def update_target_position_and_area(self, x: float, w: float, current_area: float) -> None :
+        # Berechne den Skalierungsfaktor zwischen 0.0 und 1.0
+        scaling_factor = 1.0 - (min(abs(error_x), max_allowed_error) / max_allowed_error)
+
+        # Sicherheitsstopp, wenn die Wand berührt wird
+        touches_wall: bool = (x <= 2) or ((x + w) >= (self.frame_width - 2))
+        if touches_wall:
+            scaling_factor = 0.0
+
+        # Berechne die gewünschte lineare Geschwindigkeit für diesen Frame
+        target_linear_speed = base_linear_speed * scaling_factor
+
+        # 4. STOSSDÄMPFER FÜR DIE MOTOREN (Geschwindigkeitsglättung)
+        # Verhindert, dass der Roboter beim plötzlichen Verlust abrupt stoppt.
+        alpha_speed = 0.30  # Wie schnell die Motoren auf Änderungen reagieren dürfen
+
+        # Wir holen uns die echte aktuelle Geschwindigkeit (falls vorhanden) oder nutzen das Letzte aus der Liste
+        last_sent_linear = self.linear_speeds[-1] if self.linear_speeds else 0.0
+
+        smoothed_linear_speed = alpha_speed * target_linear_speed + (1 - alpha_speed) * last_sent_linear
+
+        return smoothed_linear_speed, angular_speed
+
+    def update_target_position_and_area(self, x: float, w: float, current_area: float) -> tuple[float, float]:
         raw_cx = x + (w / 2.0)
 
-        if self.last_area > 5000 and current_area < (self.last_area * self.max_area_drop_ratio):
-            # Gating
+        # FIX: Fall 1 - Wenn der Würfel neu im Bild erscheint, Filter überspringen
+        if self.last_area < 500:
+            target_cx = raw_cx
+            target_area = current_area
+
+        # FIX: Fall 2 - Gating greift NUR bei unplausibel heftigen Einbrüchen nach unten
+        elif current_area < (self.last_area * self.max_area_drop_ratio):
             target_cx = self.last_cx
             target_area = self.last_area
+
+        # FIX: Fall 3 - Normalbetrieb oder Flächenzunahme (wird sofort akzeptiert & geglättet)
         else:
-            # Smoothing
             target_cx = self.alpha_position * raw_cx + (1 - self.alpha_position) * self.last_cx
             target_area = self.alpha_area * current_area + (1 - self.alpha_area) * self.last_area
 
         self.last_cx = target_cx
         self.last_area = target_area
+        return target_cx, target_area
 
     def process_image_loop(self) -> None:
         ret, frame = self.cap.read()
@@ -142,7 +168,8 @@ class CubeFollowerNode(Node):
 
             if current_area > 500:
                 x, y, w, h = cv2.boundingRect(largest_contour)
-                self.update_target_position_and_area(x, w, current_area)
+                # Holt sich die gefilterten Werte zurück
+                _, target_area = self.update_target_position_and_area(x, w, current_area)
                 linear_speed, angular_speed = self.calculate_speed(x, w)
 
                 # Draw
@@ -152,9 +179,11 @@ class CubeFollowerNode(Node):
             else:
                 self.last_area *= 0.5
                 target_area = self.last_area
+                self.last_cx = self.screen_center_x # Setzt Rotation im Verlustfall zurück
         else:
             self.last_area *= 0.5
             target_area = self.last_area
+            self.last_cx = self.screen_center_x # Setzt Rotation im Verlustfall zurück
 
         elapsed_time = (self.get_clock().now() - self.start_time).nanoseconds / 1e9
 
@@ -259,7 +288,7 @@ def run_hsv_tuner() -> None:
         # Live-Anzeige (Oben: Reine Maske, Unten: Nach Morphologie)
         cv2.imshow("Tuner", np.hstack([mask, mask_closed]))
 
-        if cv2.waitKey(1):
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             print("\n--- DEINE OPTIMALEN WERTE FÜR DEN CODE: ---")
             print(f"lower_red1 = np.array([0, {s_min}, {v_min}])")
             print(f"upper_red1 = np.array([{h_range}, {s_max}, {v_max}])")
@@ -271,18 +300,18 @@ def run_hsv_tuner() -> None:
     cv2.destroyAllWindows()
 
 def main(args=None):
-    #run_hsv_tuner()
-    #exit()
-
     rclpy.init(args=args)
     node = CubeFollowerNode()
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
