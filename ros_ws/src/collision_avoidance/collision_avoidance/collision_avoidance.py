@@ -23,6 +23,7 @@ class CollisionAvoidance(Node):
         super().__init__("collision_avoidance")
 
         self.target_vector = [ 0.0, 0.0 ]
+        self.adjusted_vector = [ 0.0, 0.0 ]
 
         # NOTE: Block all driving until we have received sensor data, so we know potential collisions may be avoided
         self.lidar_received = False
@@ -39,7 +40,7 @@ class CollisionAvoidance(Node):
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
-        self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector, 1)
+        self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector_callback, 1)
         self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
         self.timer = self.create_timer(0.1, self.timer_callback)
 
@@ -110,8 +111,10 @@ class CollisionAvoidance(Node):
         # Check if we are able to move
         if not self.lidar_received:
             self.get_logger().info(f"Can't drive, no sensor info received")
-        if not self.adjusted_vector_received:
+            return
+        if not self.target_vector_received:
             self.get_logger().info(f"Can't drive, no target vector received")
+            return
 
         # Move according to target vector
         msg.linear.x = self.adjusted_vector[0]
