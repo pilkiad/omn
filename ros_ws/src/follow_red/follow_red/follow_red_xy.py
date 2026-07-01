@@ -58,11 +58,11 @@ class CubeWegpunktNode(Node):
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
         """Filters the HSV image for red color ranges and applies morphological cleaning."""
         # Red color wraps around the HSV 0/180 boundary -> two masks required
-        lower_red1 = np.array([0, 120, 45])
+        lower_red1 = np.array([0, 140, 80])
         upper_red1 = np.array([5, 255, 255])
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-        lower_red2 = np.array([174, 100, 45])
+        lower_red2 = np.array([174, 140, 80])
         upper_red2 = np.array([179, 255, 255])
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
 
