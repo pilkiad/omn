@@ -80,10 +80,10 @@ class Exploration(Node):
 
         # Initiate wall hug if sufficient speed is present
         # (do it outside the loop since linear velocity needs to be completely calculated to know how fast we are going)
-        if left_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED:
+        if left_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED and not right_wall:
             self.target_vector[1] -= self.WALL_HUG_STRENGTH
             self.no_drift_counter = 50
-        if right_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED:
+        if right_wall and self.target_vector[0] > self.WALL_HUG_MIN_LINEAR_SPEED and not left_wall:
             self.target_vector[1] += self.WALL_HUG_STRENGTH
             self.no_drift_counter = 50
         if self.no_drift_counter > 0:

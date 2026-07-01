@@ -30,8 +30,8 @@ class CollisionAvoidance(Node):
         self.target_vector_received = False
 
         # Behavioural constants
-        self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
-        self.DAMPING_MULTIPLIER = [ 0.02, 0.02 ]    # How much obstacle detection should change the target direction (linear, angular)
+        self.MAX_SENSOR_RANGE = 0.6                # Maximum obstacle distance that robot will alter curse
+        self.DAMPING_MULTIPLIER = [ 0.015, 0.015 ]    # How much obstacle detection should change the target direction (linear, angular)
 
         # Prepare some default values
         self.stuck_counter = 0
@@ -42,7 +42,7 @@ class CollisionAvoidance(Node):
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
         self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector_callback, 1)
         self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
-        self.timer = self.create_timer(0.1, self.timer_callback)
+        self.timer = self.create_timer(0.5, self.timer_callback)
 
     def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
         """
