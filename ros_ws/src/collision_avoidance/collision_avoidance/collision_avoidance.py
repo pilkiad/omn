@@ -1,208 +1,135 @@
+"""
+Exploration Node
+
+Will explore the environment by
+1. Driving forward continuously
+2. Adaptively avoiding obstacle
+3. Hugging obstacles if detected
+4. Applying slight random variations to the movement pattern
+"""
+
 import rclpy
 from rclpy.node import Node
+
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
 from collision_interfaces.msg import TargetVector
-import cv2
-import numpy as np
+
 import math
-import matplotlib.pyplot as plt
-from pathlib import Path
+import random
 
-class CubeWegpunktNode(Node):
-    def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'tracking_performance.png'):
-        super().__init__('cube_wegpunkt_publisher')
-        self.video_path: Path = video_path
-        self.plot_path: Path = plot_path
+class CollisionAvoidance(Node):
+    def __init__(self):
+        super().__init__("collision_avoidance")
 
-        # --- TEST-SWITCH ---
-        # True  -> Sendet .linear (Distanz) und .angular (Winkel) an die Collision Avoidance
-        # False -> Sendet stattdessen die kartesischen XY-Werte (für deinen alten Test)
-        self.send_polar_instead_of_xy = True
+        self.target_vector = [ 0.0, 0.0 ]
 
-        # Publisher umbenannt auf das Topic und Interface deiner Gruppe
-        self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
-        self.cap = cv2.VideoCapture(0)
+        # NOTE: Block all driving until we have received sensor data, so we know potential collisions may be avoided
+        self.lidar_received = False
+        self.target_vector_received = False
 
-        if not self.cap.isOpened():
-            self.get_logger().error('Camera not found or not accessible!')
+        # Behavioural constants
+        self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
+        self.DAMPING_MULTIPLIER = [ 0.02, 0.02 ]    # How much obstacle detection should change the target direction (linear, angular)
 
-        # Camera frame settings
-        self.frame_width = 640
-        self.frame_height = 480
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        # Prepare some default values
+        self.stuck_counter = 0
+        self.unstuck_counter = 0
+        self.unstuck_spin_direction = 0.5
 
-        # Video writer for debugging
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.video_writer = cv2.VideoWriter(str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height))
+        # Handle topics
+        self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
+        self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector, 1)
+        self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
+        self.timer = self.create_timer(0.1, self.timer_callback)
 
-        # Core processing loop timer (20 Hz)
-        self.timer = self.create_timer(0.05, self.process_image_loop)
+    def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
+        """
+        Helper function to calculate a point that is a degrees and d distance from origin
+        """
 
-        # Camera geometry parameters
-        self.screen_center_x = self.frame_width / 2.0
-        self.fov_h_deg = 60.0
+        a_rad = math.radians(a)
+        dx = d * math.cos(a_rad)
+        dy = d * math.sin(a_rad)
+        return [origin[0]+dx, origin[1]+dy]
 
-        # --- Distance Estimation Calibration ---
-        self.KNOWN_DISTANCE = 1.0  # meters
-        self.KNOWN_AREA = 9750.0   # Calibrated pixel area
+    def target_vector_callback(self, msg):
+        self.target_vector_received = True
+        self.target_vector = [ msg.linear, msg.angular ]
 
-        # Low-pass filter configurations
-        self.alpha_position = 0.25
-        self.alpha_area = 0.20
-        self.last_cx = self.screen_center_x
-        self.last_area = 0.0
-        self.max_area_drop_ratio = 0.60
+    def scan_callback(self, msg):
+        self.lidar_received = True
 
-        # Trajectory storage for 2D map
-        self.path_x = []
-        self.path_y = []
+        # Define movement vector with a bias for going forward
+        self.adjusted_vector = self.target_vector.copy()
+        # For simplicity consider the robot to be at coordinate center
+        center_point = [0.0, 0.0]
 
-        self.get_logger().info(f'Cube Node gestartet. Modus: {"POLAR (Linear/Angular für Gruppe)" if self.send_polar_instead_of_xy else "CARTESIAN (X/Y)"}')
+        # Define range of angles we are interested in
+        # (left is -90, forward is 0, right is 90)
+        interesting_angles = []
+        for a in range(-70, 70, 2):
+            interesting_angles.append(a)
 
-    def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
-        lower_red1 = np.array([0, 140, 80])
-        upper_red1 = np.array([5, 255, 255])
-        mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
+        for i, r in enumerate(msg.ranges):
+            # Convert index to degrees
+            a = round(math.degrees(msg.angle_min + (i * msg.angle_increment)))
 
-        lower_red2 = np.array([174, 140, 80])
-        upper_red2 = np.array([179, 255, 255])
-        mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
+            # Ignore every angle outside forward vision cone
+            angle_found = False
+            for interesting_angle in interesting_angles:
+                if a < (interesting_angle + 1) and a > (interesting_angle - 1):
+                    angle_found = True
 
-        mask = cv2.bitwise_or(mask1, mask2)
-        kernel = np.ones((7, 7), np.uint8)
-        mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        erode_kernel = np.ones((3, 3), np.uint8)
-        return cv2.remove_artifacts if False else cv2.erode(mask_closed, erode_kernel, iterations=1)
+            # If there is an obstacle at the angle
+            if r < self.MAX_SENSOR_RANGE and angle_found:
+                # Get vector pointing away from obstacle a inverse distance (gets further away the close the obstacle is)
+                correction_point = self.get_point(center_point, a-180, self.MAX_SENSOR_RANGE - r)
+                # Move our target movement vector by the offset we just calculated, apply damping per axis
+                self.adjusted_vector[0] += correction_point[0] * self.DAMPING_MULTIPLIER[0]
+                self.adjusted_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
 
-    def estimate_distance(self, current_area: float) -> float:
-        if current_area <= 0:
-            return 0.0
-        return self.KNOWN_DISTANCE * math.sqrt(self.KNOWN_AREA / current_area)
-
-    def calculate_angle(self, filtered_cx: float) -> float:
-        delta_x = filtered_cx - self.screen_center_x
-        angle_deg = (delta_x / self.screen_center_x) * (self.fov_h_deg / 2.0)
-        return -math.radians(angle_deg)
-
-    def update_target(self, x: float, w: float, current_area: float) -> tuple[float, float]:
-        raw_cx = x + (w / 2.0)
-        if self.last_area < 500:
-            target_cx = raw_cx
-            target_area = current_area
-        elif current_area < (self.last_area * self.max_area_drop_ratio):
-            target_cx = self.last_cx
-            target_area = self.last_area
+        # If movement has been non-existent for too long, call for unstuck
+        if (abs(self.adjusted_vector[0]) + abs(self.adjusted_vector[1])) < 0.01:
+            self.stuck_counter = self.stuck_counter + 1
         else:
-            target_cx = self.alpha_position * raw_cx + (1 - self.alpha_position) * self.last_cx
-            target_area = self.alpha_area * current_area + (1 - self.alpha_area) * self.last_area
-        self.last_cx = target_cx
-        self.last_area = target_area
-        return target_cx, target_area
-
-    def process_image_loop(self) -> None:
-        ret, frame = self.cap.read()
-        if not ret:
-            return
-
-        if frame.shape[1] != self.frame_width or frame.shape[0] != self.frame_height:
-            frame = cv2.resize(frame, (self.frame_width, self.frame_height))
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = self.create_mask(hsv)
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        cube_detected = 0.0
-        val_linear = 0.0
-        val_angular = 0.0
-
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            current_area = cv2.contourArea(largest_contour)
-
-            if current_area > 500:
-                x, y, w, h = cv2.boundingRect(largest_contour)
-                true_edge = min(w, h)
-                estimated_square_area = float(true_edge * true_edge)
-                filtered_cx, filtered_area = self.update_target(x, w, estimated_square_area)
-
-                angle_rad = self.calculate_angle(filtered_cx)
-                distance_m = self.estimate_distance(filtered_area)
-
-                # Für deinen Map-Plot im Hintergrund behalten wir echten XY-Werte bei
-                rel_x = distance_m * math.cos(angle_rad)
-                rel_y = distance_m * math.sin(angle_rad)
-                self.path_x.append(rel_x)
-                self.path_y.append(rel_y)
-                cube_detected = 1.0
-
-                # --- SWITCH LOGIK FÜR DAS GEWÜNSCHTE OUTPUT FORMAT ---
-                if self.send_polar_instead_of_xy:
-                    # Genauso will es die Collision Avoidance haben:
-                    val_linear = distance_m
-                    val_angular = angle_rad
-                    overlay_text = f"Lin: {val_linear:.2f}m, Ang: {math.degrees(val_angular):.1f}deg"
-                else:
-                    # Altes Verhalten (Testzwecke)
-                    val_linear = rel_x
-                    val_angular = rel_y
-                    overlay_text = f"X: {val_linear:.2f}m, Y: {val_angular:.2f}m"
-
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(frame, overlay_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            else:
-                self.last_area *= 0.5
-                self.last_cx = self.screen_center_x
+            self.stuck_counter = 0
+        # Unstuck self by rotating ~180 degrees
+        if self.stuck_counter > 100:
+            self.unstuck_counter = 150
+        if self.unstuck_counter > 0:
+            self.unstuck_counter = self.unstuck_counter - 1
+            self.adjusted_vector[1] = self.unstuck_spin_direction
+            self.adjusted_vector[0] = 0.0
         else:
-            self.last_area *= 0.5
-            self.last_cx = self.screen_center_x
+            self.unstuck_spin_direction = random.choice([-0.5, 0.5])
 
-        self.video_writer.write(frame)
+    def timer_callback(self):
+        msg = Twist()
 
-        # Custom Message befüllen und senden
-        msg = TargetVector()
-        msg.linear = val_linear
-        msg.angular = val_angular
-        # Hinweis: Da TargetVector vermutlich kein '.z' Feld besitzt, senden wir hier nur, wenn ein Würfel da ist.
-        # Wenn kein Würfel im Bild ist, sendet die Node 0.0 (Roboter bleibt stehen oder weicht nur Lidar aus).
-        self.publisher_.publish(msg)
+        # Check if we are able to move
+        if not self.lidar_received:
+            self.get_logger().info(f"Can't drive, no sensor info received")
+        if not self.adjusted_vector_received:
+            self.get_logger().info(f"Can't drive, no target vector received")
 
-        if cube_detected > 0:
-            self.get_logger().info(f"Sende Target -> Linear: {val_linear:.2f}, Angular: {val_angular:.2f}")
-        else:
-            self.get_logger().info("Sende Target -> Kein Würfel sichtbar (0,0)")
+        # Move according to target vector
+        msg.linear.x = self.adjusted_vector[0]
+        msg.angular.z = self.adjusted_vector[1]
 
-        cv2.imshow("Cube Wegpunkt Tracker", frame)
-        cv2.waitKey(1)
+        # Publish
+        self.publisher.publish(msg)
+        self.get_logger().info(f"adjusted_vector={self.adjusted_vector}, target_vector={self.target_vector} s={self.stuck_counter}")
 
-    def plot_data(self) -> None:
-        if not self.path_x: return
-        plt.figure(figsize=(8, 8))
-        plt.plot(self.path_y, self.path_x, label='Cube Trajectory', color='red', marker='o', markersize=3, alpha=0.6)
-        plt.scatter(0, 0, color='blue', s=150, marker='^', label='Robot (Origin)')
-        plt.xlabel('Y (Lateral) / Meters')
-        plt.ylabel('X (Forward) / Meters')
-        plt.axis('equal')
-        plt.grid(True)
-        plt.savefig(self.plot_path)
-        plt.close()
-
-    def destroy_node(self) -> None:
-        self.cap.release()
-        self.video_writer.release()
-        cv2.destroyAllWindows()
-        if self.path_x: self.plot_data()
-        super().destroy_node()
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = CubeWegpunktNode()
+def main():
+    rclpy.init()
+    colliosion_avoidance = CollisionAvoidance()
     try:
-        rclpy.spin(node)
+        rclpy.spin(colliosion_avoidance)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        if rclpy.ok(): rclpy.shutdown()
-
-if __name__ == '__main__':
-    main()
+        stop_msg = Twist()
+        colliosion_avoidance.publisher.publish(stop_msg)
+        colliosion_avoidance.destroy_node()
+        rclpy.shutdown()
