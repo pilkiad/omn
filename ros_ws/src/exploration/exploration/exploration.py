@@ -13,6 +13,7 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
+from collision_interfaces.msg import TargetVector
 
 import math
 import random
@@ -21,13 +22,11 @@ class Exploration(Node):
     def __init__(self):
         super().__init__("exploration")
 
-        self.unlock_driving = False
-
         # Behavioural constants
         self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
         self.WALL_HUG_RANGE = [                     # Range at which obstacle is considered ideally position and should be "hugged"
             self.MAX_SENSOR_RANGE * 0.75,           # ... min
-            self.MAX_SENSOR_RANGE * 1.1            # ... max
+            self.MAX_SENSOR_RANGE * 1.1             # ... max
         ]
         self.WALL_HUG_STRENGTH = 0.1                # Angular strength used for turning
         self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
@@ -41,28 +40,13 @@ class Exploration(Node):
         self.drift = [0.0,0.0]
         self.drift_shuffle_c = 0
         self.no_drift_counter = 0
-        self.stuck_counter = 0
-        self.unstuck_counter = 0
-        self.unstuck_spin_direction = 0.5
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
-        self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
+        self.publisher = self.create_publisher(TargetVector, "/target_vector", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
 
-    def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
-        """
-        Helper function to calculate a point that is a degrees and d distance from origin
-        """
-
-        a_rad = math.radians(a)
-        dx = d * math.cos(a_rad)
-        dy = d * math.sin(a_rad)
-        return [origin[0]+dx, origin[1]+dy]
-
     def scan_callback(self, msg):
-        self.unlock_driving = True
-
         # Define movement vector with a bias for going forward
         self.target_vector = self.DEFAULT_TARGET_VECTOR.copy()
         # For simplicity consider the robot to be at coordinate center
@@ -88,14 +72,6 @@ class Exploration(Node):
                 if a < (interesting_angle + 1) and a > (interesting_angle - 1):
                     angle_found = True
 
-            # If there is an obstacle at the angle
-            if r < self.MAX_SENSOR_RANGE and angle_found:
-                # Get vector pointing away from obstacle a inverse distance (gets further away the close the obstacle is)
-                correction_point = self.get_point(center_point, a-180, self.MAX_SENSOR_RANGE - r)
-                # Move our target movement vector by the offset we just calculated, apply damping per axis
-                self.target_vector[0] += correction_point[0] * self.DAMPING_MULTIPLIER[0]
-                self.target_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
-
             # Check if a wall is close enough left/right to start hugging it
             if (a >= 70 and a <= 110) and (r > self.WALL_HUG_RANGE[0] and r < self.WALL_HUG_RANGE[1]):
                 right_wall = True
@@ -117,25 +93,8 @@ class Exploration(Node):
         if not left_wall and not right_wall and self.no_drift_counter <= 0:
             self.target_vector = [self.target_vector[0] + self.drift[0], self.target_vector[1] + self.drift[1]]
 
-        if (abs(self.target_vector[0]) + abs(self.target_vector[1])) < 0.01:
-            self.stuck_counter = self.stuck_counter + 1
-        else:
-            self.stuck_counter = 0
-
-        if self.stuck_counter > 100:
-            self.unstuck_counter = 150
-        if self.unstuck_counter > 0:
-            self.unstuck_counter = self.unstuck_counter - 1
-            self.target_vector[1] = self.unstuck_spin_direction
-            self.target_vector[0] = 0.0
-        else:
-            self.unstuck_spin_direction = random.choice([-0.5, 0.5])
-
     def timer_callback(self):
-        msg = Twist()
-
-        if not self.unlock_driving:
-            self.get_logger().info(f"Can't drive, no sensor info received")
+        msg = TargetVector()
 
         # Shuffle the drift every now and then
         self.drift_shuffle_c += 1
@@ -145,12 +104,12 @@ class Exploration(Node):
             self.get_logger().info(f"recalc drift")
 
         # Move according to target vector
-        msg.linear.x = self.target_vector[0]
-        msg.angular.z = self.target_vector[1]
+        msg.linear = self.target_vector[0]
+        msg.angular = self.target_vector[1]
 
         # Publish
         self.publisher.publish(msg)
-        self.get_logger().info(f"(b100) target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}, s={self.stuck_counter}")
+        self.get_logger().info(f"target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}")
 
 def main():
     rclpy.init()

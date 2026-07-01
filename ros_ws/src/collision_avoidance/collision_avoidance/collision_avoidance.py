@@ -22,22 +22,15 @@ class CollisionAvoidance(Node):
     def __init__(self):
         super().__init__("collision_avoidance")
 
+        self.target_vector = [ 0.0, 0.0 ]
+
         # NOTE: Block all driving until we have received sensor data, so we know potential collisions may be avoided
         self.lidar_received = False
         self.target_vector_received = False
 
         # Behavioural constants
         self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
-        self.WALL_HUG_RANGE = [                     # Range at which obstacle is considered ideally position and should be "hugged"
-            self.MAX_SENSOR_RANGE * 0.75,           # ... min
-            self.MAX_SENSOR_RANGE * 1.1             # ... max
-        ]
-        self.WALL_HUG_STRENGTH = 0.1                # Angular strength used for turning
-        self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
         self.DAMPING_MULTIPLIER = [ 0.02, 0.02 ]    # How much obstacle detection should change the target direction (linear, angular)
-        self.DEFAULT_TARGET_VECTOR = [ 0.1, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
-
-        self.target_vector = [ 0.0, 0.0 ]
 
         # Prepare some default values
         self.stuck_counter = 0
@@ -48,7 +41,7 @@ class CollisionAvoidance(Node):
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
         self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector, 1)
         self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
-        self.timer = self.create_timer(0.5, self.timer_callback)
+        self.timer = self.create_timer(0.1, self.timer_callback)
 
     def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
         """
