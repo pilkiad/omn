@@ -119,16 +119,16 @@ class CollisionAvoidance(Node):
         # Clamp movement vector
         if self.adjusted_vector[0] > 0.1:
             self.adjusted_vector[0] = 0.1
-            self.get_logger().info(f"clamped linear to 0.1")
+            self.get_logger().info(f"Clamped linear velocity to 0.1")
         if self.adjusted_vector[0] < -0.1:
             self.adjusted_vector[0] = -0.1
-            self.get_logger().info(f"clamped linear to -0.1")
+            self.get_logger().info(f"Clamped linear velocity to -0.1")
         if self.adjusted_vector[1] > 0.1:
             self.adjusted_vector[1] = 0.1
-            self.get_logger().info(f"clamped angular to 0.1")
+            self.get_logger().info(f"Clamped angular velocity to 0.1")
         if self.adjusted_vector[1] < -0.1:
             self.adjusted_vector[1] = -0.1
-            self.get_logger().info(f"clamped angular to -0.1")
+            self.get_logger().info(f"Clamped angular velocity to -0.1")
 
         # Move according to target vector
         msg.linear.x = self.adjusted_vector[0]
