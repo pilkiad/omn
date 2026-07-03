@@ -11,12 +11,13 @@ from geometry_msgs.msg import (
     PoseWithCovarianceStamped,
     Twist
 )
+from collision_interfaces.msg import TargetVector
 from tf_transformations import euler_from_quaternion
 
 
 class Navigation(Node):
-    def _init_(self):
-        super()._init_("navigation")
+    def __init__(self):
+        super().__init__("navigation")
 
         self.map = None
         self.width = 0
@@ -33,7 +34,7 @@ class Navigation(Node):
         self.path = []
         self.current_waypoint = 0
 
-        self.inflation_radius = 0.25
+        self.inflation_radius = 0.1
         self.inflated_map = None
 
         self.map_sub = self.create_subscription(
@@ -184,6 +185,7 @@ class Navigation(Node):
             _, current = heapq.heappop(frontier)
 
             if current == goal:
+                self.get_logger().info("a-star: found goal")
                 break
 
             for nxt, move_cost in self.neighbors(current):
@@ -207,6 +209,7 @@ class Navigation(Node):
                     came_from[nxt] = current
 
         if goal not in came_from:
+            self.get_logger().info("Cannot calculate path: no goal in came_from")
             return []
 
         path = []
@@ -225,6 +228,7 @@ class Navigation(Node):
     def plan_path(self):
 
         if self.map is None:
+            self.get_logger().info("Cannot plan path: no map")
             return
 
         start = self.world_to_grid(
@@ -248,6 +252,7 @@ class Navigation(Node):
     def navigation_loop(self):
 
         if len(self.path) == 0:
+            self.get_logger().info("Navigation loop exit: zero path length")
             return
 
         if self.current_waypoint >= len(self.path):
@@ -272,6 +277,7 @@ class Navigation(Node):
         if distance < 0.10:
 
             self.current_waypoint += 1
+            self.get_logger().info("Reached current waypoint")
             return
 
         desired_heading = math.atan2(dy, dx)
@@ -313,6 +319,7 @@ class Navigation(Node):
     def inflate_map(self):
 
         if self.map is None:
+            self.get_logger().info("Cannot plan path: no map")
             return
 
         # Start with a copy of the original map
@@ -354,5 +361,5 @@ def main():
         rclpy.shutdown()
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
