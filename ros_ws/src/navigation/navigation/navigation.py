@@ -209,7 +209,7 @@ class Navigation(Node):
                     came_from[nxt] = current
 
         if goal not in came_from:
-            self.get_logger().info("Cannot calculate path: no goal in came_from")
+            self.get_logger().info(f"Cannot calculate path: no goal in came_from (len(came_from)={len(came_from)}) (goal={goal})")
             return []
 
         path = []
