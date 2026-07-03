@@ -119,7 +119,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        stop_msg = Twist()
+        stop_msg = TargetVector()
+        stop_msg.linear = 0.0
+        stop_msg.angular = 0.0
         forwardScan.publisher.publish(stop_msg)
         forwardScan.destroy_node()
         rclpy.shutdown()
