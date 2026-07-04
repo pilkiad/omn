@@ -4,8 +4,12 @@ import math
 from collision_interfaces.msg import TargetVector
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Path
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
 
 
 class Navigation(Node):
@@ -18,6 +22,7 @@ class Navigation(Node):
         self.has_pose = False
 
         self.env_map = []
+        self.inflated_map = []
         self.map_width = 0
         self.map_height = 0
         self.map_resolution = 0.0
@@ -35,12 +40,34 @@ class Navigation(Node):
         self.last_planned_goal = None
 
         self.OCCUPIED_THRESHOLD = 50
+        self.ROBOT_LENGTH = 0.36
+        self.ROBOT_WIDTH = 0.28
+        self.ROBOT_SAFETY_MARGIN = 0.10
+        self.ROBOT_PLANNING_LENGTH = self.ROBOT_LENGTH * (1.0 + self.ROBOT_SAFETY_MARGIN)
+        self.ROBOT_PLANNING_WIDTH = self.ROBOT_WIDTH * (1.0 + self.ROBOT_SAFETY_MARGIN)
+        # Use lateral clearance on the coarse grid so passable doorways stay open.
+        self.ROBOT_CLEARANCE_RADIUS = min(
+            self.ROBOT_PLANNING_LENGTH,
+            self.ROBOT_PLANNING_WIDTH,
+        ) / 2.0
+        self.INFLATED_CELL_COST = 4.0
         self.GOAL_TOLERANCE = 0.12
         self.WAYPOINT_TOLERANCE = 0.10
-        self.WAYPOINT_LOOKAHEAD = 4
-        self.LINEAR_SPEED = 0.12
+        self.WAYPOINT_LOOKAHEAD = 2
+        self.LINEAR_SPEED = 0.10
         self.ANGULAR_GAIN = 1.6
         self.MAX_ANGULAR_SPEED = 0.7
+
+        planned_path_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.path_publisher = self.create_publisher(
+            Path,
+            '/planned_path',
+            planned_path_qos,
+        )
 
         self.map_subscription = self.create_subscription(
             OccupancyGrid,
@@ -73,11 +100,9 @@ class Navigation(Node):
         self.map_origin_x = msg.info.origin.position.x
         self.map_origin_y = msg.info.origin.position.y
         self.env_map = list(msg.data)
+        self.inflated_map = self.inflate_obstacles()
         self.has_map = True
-        self.path = []
-        self.path_grid = []
-        self.last_planned_start = None
-        self.last_planned_goal = None
+        self.clear_planned_path()
 
     def pos_callback(self, msg):
         self.update_pose(msg.pose)
@@ -92,9 +117,30 @@ class Navigation(Node):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
         self.has_goal = True
+        self.clear_planned_path()
+
+    def publish_planned_path(self):
+        msg = Path()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+
+        for x, y in self.path:
+            pose = PoseStamped()
+            pose.header.frame_id = msg.header.frame_id
+            pose.header.stamp = msg.header.stamp
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            msg.poses.append(pose)
+
+        self.path_publisher.publish(msg)
+
+    def clear_planned_path(self):
         self.path = []
         self.path_grid = []
+        self.last_planned_start = None
         self.last_planned_goal = None
+        self.publish_planned_path()
 
     def timer_callback(self):
         msg = TargetVector()
@@ -104,8 +150,7 @@ class Navigation(Node):
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
-            self.path = []
-            self.path_grid = []
+            self.clear_planned_path()
             self.publisher.publish(msg)
             return
 
@@ -113,6 +158,7 @@ class Navigation(Node):
         goal = self.world_to_grid(self.goal_x, self.goal_y)
 
         if start is None or goal is None:
+            self.clear_planned_path()
             self.publisher.publish(msg)
             self.get_logger().warn('Robot or goal is outside the map')
             return
@@ -124,17 +170,30 @@ class Navigation(Node):
         )
 
         if should_replan:
-            self.path_grid = self.a_star(start, goal)
-            self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+            planned_path_grid = self.a_star(start, goal)
+            self.get_logger().info(
+                f'Planned path with {len(planned_path_grid)} cells'
+            )
+
+            if planned_path_grid or not self.path:
+                self.path_grid = planned_path_grid
+                self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+                self.publish_planned_path()
+            else:
+                self.get_logger().warn('Replan failed; continuing previous path')
+
             self.last_planned_start = start
             self.last_planned_goal = goal
-            self.get_logger().info(
-                f'Planned path with {len(self.path_grid)} cells'
-            )
 
         if not self.path:
             self.publisher.publish(msg)
-            self.get_logger().warn('No path to goal found')
+            self.get_logger().warn(
+                'No path to goal found; '
+                f'start={start} raw_free={self.is_raw_free(start)} '
+                f'traversable={self.is_traversable(start)} '
+                f'goal={goal} raw_free={self.is_raw_free(goal)} '
+                f'traversable={self.is_traversable(goal)}'
+            )
             return
 
         waypoint = self.next_waypoint()
@@ -147,7 +206,7 @@ class Navigation(Node):
         return self.has_map and self.has_pose and self.has_goal
 
     def a_star(self, start, goal):
-        if not self.is_free(start) or not self.is_free(goal):
+        if not self.is_raw_free(start) or not self.is_raw_free(goal):
             return []
 
         open_set = []
@@ -166,7 +225,7 @@ class Navigation(Node):
                 continue
             closed.add(current)
 
-            for neighbor, step_cost in self.neighbors(current):
+            for neighbor, step_cost in self.neighbors(current, goal):
                 if neighbor in closed:
                     continue
 
@@ -181,7 +240,7 @@ class Navigation(Node):
 
         return []
 
-    def neighbors(self, cell):
+    def neighbors(self, cell, goal):
         x, y = cell
         directions = [
             (-1, 0, 1.0),
@@ -199,11 +258,11 @@ class Navigation(Node):
             if dx != 0 and dy != 0:
                 adjacent_x = (x + dx, y)
                 adjacent_y = (x, y + dy)
-                if not self.is_free(adjacent_x) or not self.is_free(adjacent_y):
+                if not self.is_traversable(adjacent_x) or not self.is_traversable(adjacent_y):
                     continue
 
-            if self.is_free(neighbor):
-                yield neighbor, cost
+            if self.is_traversable(neighbor) or (neighbor == goal and self.is_raw_free(neighbor)):
+                yield neighbor, cost + self.inflation_penalty(neighbor)
 
     def reconstruct_path(self, came_from, current):
         path = [current]
@@ -264,11 +323,92 @@ class Navigation(Node):
         )
 
     def is_free(self, cell):
+        return self.is_traversable(cell) and not self.is_inflated(cell)
+
+    def is_traversable(self, cell):
+        return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
+
+    def inflation_penalty(self, cell):
+        if self.is_inflated(cell):
+            return self.INFLATED_CELL_COST
+        return 0.0
+
+    def is_inflated(self, cell):
+        if len(self.inflated_map) != len(self.env_map):
+            return False
+
         if not self.in_bounds(cell):
             return False
 
-        value = self.env_map[self.map_index(cell)]
-        return value >= 0 and value < self.OCCUPIED_THRESHOLD
+        index = self.map_index(cell)
+        if index >= len(self.inflated_map):
+            return False
+
+        return self.inflated_map[index]
+
+    def is_raw_free(self, cell):
+        if not self.in_bounds(cell):
+            return False
+
+        index = self.map_index(cell)
+        if index >= len(self.env_map):
+            return False
+
+        return not self.raw_value_blocked(self.env_map[index])
+
+    def inflate_obstacles(self):
+        inflated_map = [False] * len(self.env_map)
+        if not self.env_map or self.map_width <= 0 or self.map_height <= 0:
+            return inflated_map
+
+        offsets = self.inflation_offsets()
+        for index, value in enumerate(self.env_map):
+            if not self.raw_value_blocked(value):
+                continue
+
+            obstacle_x = index % self.map_width
+            obstacle_y = index // self.map_width
+            for dx, dy in offsets:
+                inflated_cell = (obstacle_x + dx, obstacle_y + dy)
+                if self.in_bounds(inflated_cell):
+                    inflated_map[self.map_index(inflated_cell)] = True
+
+        return inflated_map
+
+    def inflation_offsets(self):
+        if self.map_resolution <= 0.0:
+            return [(0, 0)]
+
+        clearance_cells = self.clearance_cells()
+        offsets = []
+        for dy in range(-clearance_cells, clearance_cells + 1):
+            for dx in range(-clearance_cells, clearance_cells + 1):
+                if math.hypot(dx, dy) <= clearance_cells:
+                    offsets.append((dx, dy))
+
+        return offsets
+
+    def has_map_edge_clearance(self, cell):
+        if self.map_resolution <= 0.0:
+            return False
+
+        x, y = cell
+        clearance_cells = self.clearance_cells()
+        return (
+            x >= clearance_cells
+            and y >= clearance_cells
+            and x < self.map_width - clearance_cells
+            and y < self.map_height - clearance_cells
+        )
+
+    def clearance_cells(self):
+        if self.map_resolution <= 0.0:
+            return 0
+
+        return math.ceil(self.ROBOT_CLEARANCE_RADIUS / self.map_resolution)
+
+    def raw_value_blocked(self, value):
+        return value < 0 or value >= self.OCCUPIED_THRESHOLD
 
     def in_bounds(self, cell):
         x, y = cell
@@ -308,7 +448,14 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        if rclpy.ok():
-            navigation.publisher.publish(TargetVector())
+        try:
+            if rclpy.ok():
+                navigation.publisher.publish(TargetVector())
+        except Exception:
+            pass
+        try:
             navigation.destroy_node()
+        except (Exception, KeyboardInterrupt):
+            pass
+        if rclpy.ok():
             rclpy.shutdown()
