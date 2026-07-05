@@ -70,11 +70,11 @@ def generate_launch_description():
         }.items()
     )
 
-   # odom_downsampler_node = Node(
-   # package='slam',
-   # executable='odom_downsampler',
-   # name='odom_downsampler',
-   # output='screen')
+    odom_downsampler_node = Node(
+    package='slam',
+    executable='odom_downsampler',
+    name='odom_downsampler',
+    output='screen')
 
     # -------------------------------------------------
     # Dein Analyzer
@@ -93,5 +93,5 @@ def generate_launch_description():
         static_tf_node,
         slam_toolbox_launch,
         slam_analyzer_node,
-       # odom_downsampler_node
+       odom_downsampler_node
     ])

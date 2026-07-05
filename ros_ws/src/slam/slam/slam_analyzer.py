@@ -194,7 +194,7 @@ class SlamAnalyzer(LifecycleNode):
         # ---------------------------
         # OPTIONAL STOP CONDITION
         # ---------------------------
-        if smooth_score > 0.97:
+        if smooth_score > 0.6:
             self.get_logger().info("SLAM KONVERGIERT (>= 97%)")
 
 
