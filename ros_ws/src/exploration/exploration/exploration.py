@@ -30,8 +30,12 @@ class Exploration(Node):
 
         self.publisher = self.create_publisher(PoseStamped, "/goal_pose", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
+        self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
         self.pose_subscription = self.create_subscription(PoseStamped, '/pose', self.pose_callback, 1)
-        self.exploration_time = self.create_timer(30, self.exploration_callback)
+        self.exploration_time = self.create_timer(10, self.exploration_callback)
+
+    def target_vector_callback(self, msg):
+        self.target_vector = [ msg.linear, msg.angular ]
 
     def get_cell_at(self, x, y):
         return self.env_map[(y * self.map_width) + x]
@@ -46,6 +50,9 @@ class Exploration(Node):
             return
         if self.our_position is None:
             self.get_logger().info("Cannot explore: no current position")
+            return
+        if self.target_vector != [ 0.0, 0.0 ]:
+            self.get_logger().info("Waiting for standstill...")
             return
 
         target_positions = []
@@ -63,17 +70,23 @@ class Exploration(Node):
                     self.get_cell_at(x, y-1)
                 ]
 
-                # Only look at non-visited cells
-                if cell_value != -1:
+                # Only look at free cells
+                if cell_value != 0:
                     continue
 
                 # Atleast one neighbor needs to be marked as "free" to consider the position reachable
-                reachable = False
+                has_empty = False
+                has_full = False
+                has_wall = False
                 for neighbor in neighbors:
-                    if neighbor == 0:
-                        reachable = True
+                    if neighbor == -1:
+                        has_empty = True
+                    elif neighbor == 0:
+                        has_full = True
+                    else:
+                        has_wall = True
 
-                if not reachable:
+                if not (has_empty and has_full and not has_wall):
                     continue
 
                 # Note the position as desireable
@@ -108,10 +121,6 @@ class Exploration(Node):
         # Send the desired position over to navigation
         self.send_position(closest_position)
 
-        # Wipe stored data so we don't work with stale data
-        self.env_map = None
-        self.our_position = None
-
     def send_position(self, position):
         self.already_visited.append(position)
         msg = PoseStamped()
@@ -129,10 +138,8 @@ class Exploration(Node):
         self.env_map = list(msg.data)
         self.map_width = msg.info.width
         self.map_height = msg.info.height
-        self.map_origin = [ msg.info.origin.positon.x, msg.info.origin.positon.y ]
+        self.map_origin = [ msg.info.origin.position.x, msg.info.origin.position.y ]
         self.map_resolution = msg.info.resolution
-
-        self.get_logger().info("Updated map")
 
 def main():
     rclpy.init()
