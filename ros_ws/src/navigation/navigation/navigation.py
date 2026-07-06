@@ -45,10 +45,11 @@ class Navigation(Node):
         # Clearance is measured from the robot center on the planning grid.
         # self.ROBOT_CLEARANCE_RADIUS = self.ROBOT_RADIUS * (1.0 + self.ROBOT_SAFETY_MARGIN)
         self.ROBOT_CLEARANCE_RADIUS = 0.7
-        self.MAX_INFLATION_COST = 8.0
-        self.GOAL_TOLERANCE = 0.12
+        self.MAX_INFLATION_COST = 4.0
+        self.GOAL_TOLERANCE = 0.10
         self.WAYPOINT_TOLERANCE = 0.10
         self.WAYPOINT_LOOKAHEAD = 2
+        self.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
         self.LINEAR_SPEED = 0.18
         self.ANGULAR_GAIN = 1.6
         self.MAX_ANGULAR_SPEED = 0.9
@@ -177,27 +178,33 @@ class Navigation(Node):
             self.get_logger().warn('Robot or goal is outside the map')
             return
 
-        should_replan = (
-            not self.path
-            or start != self.last_planned_start
-            or goal != self.last_planned_goal
-        )
+        replan_reason = self.replan_reason(start, goal)
 
-        if should_replan:
+        if replan_reason is not None:
             planned_path_grid = self.a_star(start, goal)
             self.get_logger().info(
-                f'Planned path with {len(planned_path_grid)} cells'
+                f'Planned path with {len(planned_path_grid)} cells; '
+                f'reason={replan_reason}'
             )
 
-            if planned_path_grid or not self.path:
-                self.path_grid = planned_path_grid
-                self.path = [self.grid_to_world(cell) for cell in self.path_grid]
-                self.publish_planned_path()
-            else:
-                self.get_logger().warn('Replan failed; continuing previous path')
+            if not planned_path_grid:
+                self.clear_planned_path()
+                self.publisher.publish(msg)
+                self.get_logger().warn(
+                    'No path to goal found; '
+                    f'reason={replan_reason} '
+                    f'start={start} raw_free={self.is_raw_free(start)} '
+                    f'traversable={self.is_traversable(start)} '
+                    f'goal={goal} raw_free={self.is_raw_free(goal)} '
+                    f'traversable={self.is_traversable(goal)}'
+                )
+                return
 
+            self.path_grid = planned_path_grid
+            self.path = [self.grid_to_world(cell) for cell in self.path_grid]
             self.last_planned_start = start
             self.last_planned_goal = goal
+            self.publish_planned_path()
 
         if not self.path:
             self.publisher.publish(msg)
@@ -218,6 +225,42 @@ class Navigation(Node):
 
     def ready_to_plan(self):
         return self.has_map and self.has_pose and self.has_goal
+
+    def replan_reason(self, start, goal):
+        if not self.path or not self.path_grid:
+            return 'no current path'
+
+        if goal != self.last_planned_goal:
+            return 'goal changed'
+
+        if self.path_is_blocked(start, goal):
+            return 'path blocked'
+
+        if self.distance_to_path_grid(start) > self.OFF_PATH_REPLAN_DISTANCE_CELLS:
+            return 'robot off path'
+
+        return None
+
+    def path_is_blocked(self, start, goal):
+        for cell in self.path_grid:
+            if cell == start or cell == goal:
+                if not self.is_raw_free(cell):
+                    return True
+                continue
+
+            if not self.is_traversable(cell):
+                return True
+
+        return False
+
+    def distance_to_path_grid(self, cell):
+        if not self.path_grid:
+            return math.inf
+
+        return min(
+            math.hypot(cell[0] - path_cell[0], cell[1] - path_cell[1])
+            for path_cell in self.path_grid
+        )
 
     def a_star(self, start, goal):
         if not self.is_raw_free(start) or not self.is_raw_free(goal):
