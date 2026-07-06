@@ -17,7 +17,7 @@ In the Gazebo smoke setup, it is launched by:
 ros2 launch navigation_gazebo nav_smoke_gazebo.launch.py
 ```
 
-With both gazebo and rviz:
+With both gazebo and rviz(while only rebuilding navigation):
 
 ```bash
 source /opt/ros/jazzy/setup.bash
