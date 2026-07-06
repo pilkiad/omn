@@ -18,9 +18,9 @@ from collision_interfaces.msg import TargetVector
 import math
 import random
 
-class Exploration(Node):
+class BlindExploration(Node):
     def __init__(self):
-        super().__init__("exploration")
+        super().__init__("blind_exploration")
 
         # Behavioural constants
         self.MAX_SENSOR_RANGE = 0.55                # Maximum obstacle distance that robot will alter curse
@@ -113,15 +113,15 @@ class Exploration(Node):
 
 def main():
     rclpy.init()
-    forwardScan = Exploration()
+    blindExploration = BlindExploration()
     try:
-        rclpy.spin(forwardScan)
+        rclpy.spin(blindExploration)
     except KeyboardInterrupt:
         pass
     finally:
         stop_msg = TargetVector()
         stop_msg.linear = 0.0
         stop_msg.angular = 0.0
-        forwardScan.publisher.publish(stop_msg)
-        forwardScan.destroy_node()
+        blindExploration.publisher.publish(stop_msg)
+        blindExploration.destroy_node()
         rclpy.shutdown()

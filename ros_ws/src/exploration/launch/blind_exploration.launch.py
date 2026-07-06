@@ -5,9 +5,9 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
         Node(
-            package='exploration',
-            executable='exploration',
-            name='exploration',
+            package='blind_exploration',
+            executable='blind_exploration',
+            name='blind_exploration',
         ),
         Node(
             package='collision_avoidance',
