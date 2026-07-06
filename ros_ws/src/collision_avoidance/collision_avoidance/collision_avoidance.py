@@ -30,8 +30,8 @@ class CollisionAvoidance(Node):
         self.target_vector_received = False
 
         # Behavioural constants
-        self.MAX_SENSOR_RANGE = 0.6                # Maximum obstacle distance that robot will alter curse
-        self.DAMPING_MULTIPLIER = [ 0.015, 0.015 ]    # How much obstacle detection should change the target direction (linear, angular)
+        self.MAX_SENSOR_RANGE = 0.6                 # Maximum obstacle distance that robot will alter curse
+        self.DAMPING_MULTIPLIER = [ 0.015, 0.015 ]  # How much obstacle detection should change the target direction (linear, angular)
 
         # Prepare some default values
         self.stuck_counter = 0
@@ -65,6 +65,22 @@ class CollisionAvoidance(Node):
         self.adjusted_vector = self.target_vector.copy()
         # For simplicity consider the robot to be at coordinate center
         center_point = [0.0, 0.0]
+
+        # Clamp movement vector
+        # We do this once after receiving the vector to ensure we start working with safe values
+        # and once after collision avoidance was calculate to ensure we _produce_ safe values
+        if self.adjusted_vector[0] > 0.1:
+            self.adjusted_vector[0] = 0.1
+            self.get_logger().info(f"Clamped linear velocity to 0.1 (incoming)")
+        if self.adjusted_vector[0] < -0.1:
+            self.adjusted_vector[0] = -0.1
+            self.get_logger().info(f"Clamped linear velocity to -0.1 (incoming)")
+        if self.adjusted_vector[1] > 0.1:
+            self.adjusted_vector[1] = 0.1
+            self.get_logger().info(f"Clamped angular velocity to 0.1 (incoming)")
+        if self.adjusted_vector[1] < -0.1:
+            self.adjusted_vector[1] = -0.1
+            self.get_logger().info(f"Clamped angular velocity to -0.1 (incoming)")
 
         # Define range of angles we are interested in
         # (left is -90, forward is 0, right is 90)
@@ -117,18 +133,20 @@ class CollisionAvoidance(Node):
             return
 
         # Clamp movement vector
+        # We do this once after receiving the vector to ensure we start working with safe values
+        # and once after collision avoidance was calculate to ensure we _produce_ safe values
         if self.adjusted_vector[0] > 0.1:
             self.adjusted_vector[0] = 0.1
-            self.get_logger().info(f"Clamped linear velocity to 0.1")
+            self.get_logger().info(f"Clamped linear velocity to 0.1 (outgoing)")
         if self.adjusted_vector[0] < -0.1:
             self.adjusted_vector[0] = -0.1
-            self.get_logger().info(f"Clamped linear velocity to -0.1")
+            self.get_logger().info(f"Clamped linear velocity to -0.1 (outgoing)")
         if self.adjusted_vector[1] > 0.1:
             self.adjusted_vector[1] = 0.1
-            self.get_logger().info(f"Clamped angular velocity to 0.1")
+            self.get_logger().info(f"Clamped angular velocity to 0.1 (outgoing)")
         if self.adjusted_vector[1] < -0.1:
             self.adjusted_vector[1] = -0.1
-            self.get_logger().info(f"Clamped angular velocity to -0.1")
+            self.get_logger().info(f"Clamped angular velocity to -0.1 (outgoing)")
 
         # Move according to target vector
         msg.linear.x = self.adjusted_vector[0]
