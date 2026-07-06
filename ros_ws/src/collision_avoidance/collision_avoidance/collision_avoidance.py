@@ -164,7 +164,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        stop_msg = Twist()
-        colliosion_avoidance.publisher.publish(stop_msg)
-        colliosion_avoidance.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            colliosion_avoidance.publisher.publish(Twist())
+            colliosion_avoidance.destroy_node()
+            rclpy.shutdown()

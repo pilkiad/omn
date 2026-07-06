@@ -1,365 +1,493 @@
-import math
 import heapq
-import numpy as np
+import math
 
+from collision_interfaces.msg import TargetVector
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Path
 import rclpy
 from rclpy.node import Node
-
-from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import (
-    PoseStamped,
-    PoseWithCovarianceStamped,
-    Twist
-)
-from collision_interfaces.msg import TargetVector
-from tf_transformations import euler_from_quaternion
+from rclpy.qos import DurabilityPolicy
+from rclpy.qos import QoSProfile
+from rclpy.qos import ReliabilityPolicy
 
 
 class Navigation(Node):
     def __init__(self):
-        super().__init__("navigation")
+        super().__init__('navigation')
 
-        self.map = None
-        self.width = 0
-        self.height = 0
-        self.resolution = 0.0
-        self.origin = None
+        self.x = 0.0
+        self.y = 0.0
+        self.yaw = 0.0
+        self.has_pose = False
 
-        self.robot_x = 0.0
-        self.robot_y = 0.0
+        self.env_map = []
+        self.obstacle_distance_map = []
+        self.map_width = 0
+        self.map_height = 0
+        self.map_resolution = 0.0
+        self.map_origin_x = 0.0
+        self.map_origin_y = 0.0
+        self.has_map = False
 
-        self.goal_x = None
-        self.goal_y = None
+        self.goal_x = 0.0
+        self.goal_y = 0.0
+        self.has_goal = False
 
         self.path = []
-        self.current_waypoint = 0
+        self.path_grid = []
+        self.last_planned_start = None
+        self.last_planned_goal = None
 
-        self.inflation_radius = 0.1
-        self.inflated_map = None
+        self.OCCUPIED_THRESHOLD = 50
+        self.ROBOT_RADIUS = 0.33
+        self.ROBOT_SAFETY_MARGIN = 0.10
+        # Clearance is measured from the robot center on the planning grid.
+        # self.ROBOT_CLEARANCE_RADIUS = self.ROBOT_RADIUS * (1.0 + self.ROBOT_SAFETY_MARGIN)
+        self.ROBOT_CLEARANCE_RADIUS = 0.7
+        self.MAX_INFLATION_COST = 8.0
+        self.GOAL_TOLERANCE = 0.12
+        self.WAYPOINT_TOLERANCE = 0.10
+        self.WAYPOINT_LOOKAHEAD = 2
+        self.LINEAR_SPEED = 0.18
+        self.ANGULAR_GAIN = 1.6
+        self.MAX_ANGULAR_SPEED = 0.9
 
-        self.map_sub = self.create_subscription(
+        planned_path_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.path_publisher = self.create_publisher(
+            Path,
+            '/planned_path',
+            planned_path_qos,
+        )
+
+        self.map_subscription = self.create_subscription(
             OccupancyGrid,
-            "/map",
+            '/map',
             self.map_callback,
             1
         )
 
-        self.pose_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            "/pose",
-            self.pose_callback,
+        self.pos_subscription = self.create_subscription(
+            PoseStamped,
+            '/pos',
+            self.pos_callback,
             1
         )
 
-        self.goal_sub = self.create_subscription(
+        self.goal_pose_subscription = self.create_subscription(
             PoseStamped,
-            "/goal_pose",
-            self.goal_callback,
-            10
+            '/goal_pose',
+            self.goal_pose_callback,
+            1
         )
 
-        self.cmd_pub = self.create_publisher(
-            TargetVector,
-            "/target_vector",
-            10
-        )
-
-        self.timer = self.create_timer(
-            0.1,
-            self.navigation_loop
-        )
+        self.publisher = self.create_publisher(TargetVector, '/target_vector', 1)
+        self.timer = self.create_timer(0.2, self.timer_callback)
 
     def map_callback(self, msg):
-
-        self.width = msg.info.width
-        self.height = msg.info.height
-        self.resolution = msg.info.resolution
-        self.origin = msg.info.origin.position
-
-        self.map = np.array(msg.data).reshape(
-            (self.height, self.width)
+        env_map = list(msg.data)
+        map_changed = (
+            not self.has_map
+            or self.map_width != msg.info.width
+            or self.map_height != msg.info.height
+            or self.map_resolution != msg.info.resolution
+            or self.map_origin_x != msg.info.origin.position.x
+            or self.map_origin_y != msg.info.origin.position.y
+            or self.env_map != env_map
         )
 
-        self.inflate_map()
+        if not map_changed:
+            return
 
-    def pose_callback(self, msg):
+        self.map_width = msg.info.width
+        self.map_height = msg.info.height
+        self.map_resolution = msg.info.resolution
+        self.map_origin_x = msg.info.origin.position.x
+        self.map_origin_y = msg.info.origin.position.y
+        self.env_map = env_map
+        self.obstacle_distance_map = self.build_obstacle_distance_map()
+        self.has_map = True
+        self.clear_planned_path()
 
-        p = msg.pose.pose.position
+    def pos_callback(self, msg):
+        self.update_pose(msg.pose)
 
-        self.robot_x = p.x
-        self.robot_y = p.y
+    def update_pose(self, pose):
+        self.x = pose.position.x
+        self.y = pose.position.y
+        self.yaw = self.yaw_from_quaternion(pose.orientation)
+        self.has_pose = True
 
-        q = msg.pose.pose.orientation
-
-        _, _, self.robot_yaw = euler_from_quaternion([
-            q.x,
-            q.y,
-            q.z,
-            q.w
-        ])
-
-    def goal_callback(self, msg):
-
+    def goal_pose_callback(self, msg):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
+        self.has_goal = True
+        self.get_logger().info(
+            f'Received goal pose x={self.goal_x:.3f}, y={self.goal_y:.3f}'
+        )
+        self.clear_planned_path()
 
-        self.plan_path()
+    def publish_planned_path(self):
+        msg = Path()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
 
-    def world_to_grid(self, x, y):
+        for x, y in self.path:
+            pose = PoseStamped()
+            pose.header.frame_id = msg.header.frame_id
+            pose.header.stamp = msg.header.stamp
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            msg.poses.append(pose)
 
-        gx = int((x - self.origin.x) / self.resolution)
-        gy = int((y - self.origin.y) / self.resolution)
+        self.path_publisher.publish(msg)
 
-        return gx, gy
+    def clear_planned_path(self):
+        self.path = []
+        self.path_grid = []
+        self.last_planned_start = None
+        self.last_planned_goal = None
+        self.publish_planned_path()
 
-    def grid_to_world(self, gx, gy):
+    def timer_callback(self):
+        msg = TargetVector()
 
-        x = gx * self.resolution + self.origin.x
-        y = gy * self.resolution + self.origin.y
+        if not self.ready_to_plan():
+            self.publisher.publish(msg)
+            return
 
-        return x, y
+        if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
+            self.clear_planned_path()
+            self.has_goal = False
+            self.publisher.publish(msg)
+            self.get_logger().info('Goal succeeded')
+            return
 
-    def heuristic(self, a, b):
+        start = self.world_to_grid(self.x, self.y)
+        goal = self.world_to_grid(self.goal_x, self.goal_y)
 
-        return math.hypot(a[0]-b[0], a[1]-b[1])
+        if start is None or goal is None:
+            self.clear_planned_path()
+            self.publisher.publish(msg)
+            self.get_logger().warn('Robot or goal is outside the map')
+            return
 
-    def neighbors(self, node):
+        should_replan = (
+            not self.path
+            or start != self.last_planned_start
+            or goal != self.last_planned_goal
+        )
 
-        x, y = node
+        if should_replan:
+            planned_path_grid = self.a_star(start, goal)
+            self.get_logger().info(
+                f'Planned path with {len(planned_path_grid)} cells'
+            )
 
-        directions = [
-            (-1, 0, 1.0),
-            ( 1, 0, 1.0),
-            ( 0,-1, 1.0),
-            ( 0, 1, 1.0),
+            if planned_path_grid or not self.path:
+                self.path_grid = planned_path_grid
+                self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+                self.publish_planned_path()
+            else:
+                self.get_logger().warn('Replan failed; continuing previous path')
 
-            (-1,-1, math.sqrt(2)),
-            (-1, 1, math.sqrt(2)),
-            ( 1,-1, math.sqrt(2)),
-            ( 1, 1, math.sqrt(2)),
-        ]
+            self.last_planned_start = start
+            self.last_planned_goal = goal
 
-        result = []
+        if not self.path:
+            self.publisher.publish(msg)
+            self.get_logger().warn(
+                'No path to goal found; '
+                f'start={start} raw_free={self.is_raw_free(start)} '
+                f'traversable={self.is_traversable(start)} '
+                f'goal={goal} raw_free={self.is_raw_free(goal)} '
+                f'traversable={self.is_traversable(goal)}'
+            )
+            return
 
-        for dx, dy, cost in directions:
+        waypoint = self.next_waypoint()
+        linear, angular = self.target_vector_to_waypoint(waypoint)
+        msg.linear = linear
+        msg.angular = angular
+        self.publisher.publish(msg)
 
-            nx = x + dx
-            ny = y + dy
+    def ready_to_plan(self):
+        return self.has_map and self.has_pose and self.has_goal
 
-            if not (0 <= nx < self.width and
-                    0 <= ny < self.height):
-                continue
-
-            if self.inflated_map[ny][nx] == -1 or self.inflated_map[ny][nx] > 50:
-                continue
-
-            #
-            # Prevent corner cutting
-            #
-            if abs(dx) == 1 and abs(dy) == 1:
-
-                if self.inflated_map[y][nx] > 50:
-                    continue
-
-                if self.inflated_map[ny][x] > 50:
-                    continue
-
-            result.append(((nx, ny), cost))
-
-        return result
-
-    def astar(self, start, goal):
-
-        frontier = []
-
-        heapq.heappush(frontier, (0, start))
-
-        came_from = {}
-        cost = {}
-
-        came_from[start] = None
-        cost[start] = 0
-
-        while frontier:
-
-            _, current = heapq.heappop(frontier)
-
-            if current == goal:
-                self.get_logger().info("a-star: found goal")
-                break
-
-            for nxt, move_cost in self.neighbors(current):
-
-                new_cost = cost[current] + move_cost
-
-                if nxt not in cost or new_cost < cost[nxt]:
-
-                    cost[nxt] = new_cost
-
-                    priority = new_cost + self.heuristic(
-                        goal,
-                        nxt
-                    )
-
-                    heapq.heappush(
-                        frontier,
-                        (priority, nxt)
-                    )
-
-                    came_from[nxt] = current
-
-        if goal not in came_from:
-            self.get_logger().info(f"Cannot calculate path: no goal in came_from (len(came_from)={len(came_from)}) (goal={goal})")
+    def a_star(self, start, goal):
+        if not self.is_raw_free(start) or not self.is_raw_free(goal):
             return []
 
-        path = []
+        open_set = []
+        heapq.heappush(open_set, (0.0, start))
+        came_from = {}
+        g_score = {start: 0.0}
+        closed = set()
 
-        node = goal
+        while open_set:
+            _, current = heapq.heappop(open_set)
 
-        while node is not None:
+            if current == goal:
+                return self.reconstruct_path(came_from, current)
 
-            path.append(node)
-            node = came_from[node]
+            if current in closed:
+                continue
+            closed.add(current)
 
+            for neighbor, step_cost in self.neighbors(current, goal):
+                if neighbor in closed:
+                    continue
+
+                new_score = g_score[current] + step_cost
+                if new_score >= g_score.get(neighbor, math.inf):
+                    continue
+
+                came_from[neighbor] = current
+                g_score[neighbor] = new_score
+                f_score = new_score + self.heuristic(neighbor, goal)
+                heapq.heappush(open_set, (f_score, neighbor))
+
+        return []
+
+    def neighbors(self, cell, goal):
+        x, y = cell
+        directions = [
+            (-1, 0, 1.0),
+            (1, 0, 1.0),
+            (0, -1, 1.0),
+            (0, 1, 1.0),
+            (-1, -1, math.sqrt(2.0)),
+            (-1, 1, math.sqrt(2.0)),
+            (1, -1, math.sqrt(2.0)),
+            (1, 1, math.sqrt(2.0)),
+        ]
+
+        for dx, dy, cost in directions:
+            neighbor = (x + dx, y + dy)
+            if dx != 0 and dy != 0:
+                adjacent_x = (x + dx, y)
+                adjacent_y = (x, y + dy)
+                if not self.is_traversable(adjacent_x) or not self.is_traversable(adjacent_y):
+                    continue
+
+            if self.is_traversable(neighbor) or (neighbor == goal and self.is_raw_free(neighbor)):
+                yield neighbor, cost + self.inflation_penalty(neighbor)
+
+    def reconstruct_path(self, came_from, current):
+        path = [current]
+        while current in came_from:
+            current = came_from[current]
+            path.append(current)
         path.reverse()
-
         return path
 
-    def plan_path(self):
+    def next_waypoint(self):
+        while len(self.path) > 1:
+            waypoint_x, waypoint_y = self.path[0]
+            if self.distance(self.x, self.y, waypoint_x, waypoint_y) > self.WAYPOINT_TOLERANCE:
+                break
+            self.path.pop(0)
+            self.path_grid.pop(0)
 
-        if self.map is None:
-            self.get_logger().info("Cannot plan path: no map")
-            return
+        index = min(self.WAYPOINT_LOOKAHEAD, len(self.path) - 1)
+        return self.path[index]
 
-        start = self.world_to_grid(
-            self.robot_x,
-            self.robot_y
+    def target_vector_to_waypoint(self, waypoint):
+        waypoint_x, waypoint_y = waypoint
+        dx = waypoint_x - self.x
+        dy = waypoint_y - self.y
+        distance_to_waypoint = math.hypot(dx, dy)
+
+        desired_yaw = math.atan2(dy, dx)
+        yaw_error = self.normalize_angle(desired_yaw - self.yaw)
+
+        angular = self.clamp(
+            yaw_error * self.ANGULAR_GAIN,
+            -self.MAX_ANGULAR_SPEED,
+            self.MAX_ANGULAR_SPEED
         )
 
-        goal = self.world_to_grid(
-            self.goal_x,
-            self.goal_y
+        turn_scale = max(0.0, 1.0 - abs(yaw_error) / (math.pi / 2.0))
+        linear = min(self.LINEAR_SPEED, distance_to_waypoint) * turn_scale
+
+        return linear, angular
+
+    def world_to_grid(self, x, y):
+        if self.map_resolution <= 0.0:
+            return None
+
+        grid_x = math.floor((x - self.map_origin_x) / self.map_resolution)
+        grid_y = math.floor((y - self.map_origin_y) / self.map_resolution)
+        cell = (grid_x, grid_y)
+
+        if not self.in_bounds(cell):
+            return None
+        return cell
+
+    def grid_to_world(self, cell):
+        x, y = cell
+        return (
+            self.map_origin_x + (x + 0.5) * self.map_resolution,
+            self.map_origin_y + (y + 0.5) * self.map_resolution,
         )
 
-        self.path = self.astar(start, goal)
+    def is_free(self, cell):
+        return self.is_traversable(cell) and not self.is_inflated(cell)
 
-        self.current_waypoint = 0
+    def is_traversable(self, cell):
+        return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
 
-        self.get_logger().info(
-            f"Planned path with {len(self.path)} cells"
+    def inflation_penalty(self, cell):
+        if self.ROBOT_CLEARANCE_RADIUS <= 0.0:
+            return 0.0
+
+        obstacle_distance = self.obstacle_distance(cell)
+        if obstacle_distance >= self.ROBOT_CLEARANCE_RADIUS:
+            return 0.0
+
+        closeness = (
+            self.ROBOT_CLEARANCE_RADIUS - obstacle_distance
+        ) / self.ROBOT_CLEARANCE_RADIUS
+        return self.MAX_INFLATION_COST * closeness * closeness
+
+    def is_inflated(self, cell):
+        return self.obstacle_distance(cell) < self.ROBOT_CLEARANCE_RADIUS
+
+    def obstacle_distance(self, cell):
+        if len(self.obstacle_distance_map) != len(self.env_map):
+            return math.inf
+
+        if not self.in_bounds(cell):
+            return math.inf
+
+        index = self.map_index(cell)
+        if index >= len(self.obstacle_distance_map):
+            return math.inf
+
+        return self.obstacle_distance_map[index]
+
+    def is_raw_free(self, cell):
+        if not self.in_bounds(cell):
+            return False
+
+        index = self.map_index(cell)
+        if index >= len(self.env_map):
+            return False
+
+        return not self.raw_value_blocked(self.env_map[index])
+
+    def build_obstacle_distance_map(self):
+        obstacle_distance_map = [math.inf] * len(self.env_map)
+        if not self.env_map or self.map_width <= 0 or self.map_height <= 0:
+            return obstacle_distance_map
+
+        offsets = self.inflation_offsets()
+        for index, value in enumerate(self.env_map):
+            if not self.raw_value_blocked(value):
+                continue
+
+            obstacle_x = index % self.map_width
+            obstacle_y = index // self.map_width
+            for dx, dy, distance in offsets:
+                nearby_cell = (obstacle_x + dx, obstacle_y + dy)
+                if not self.in_bounds(nearby_cell):
+                    continue
+
+                nearby_index = self.map_index(nearby_cell)
+                obstacle_distance_map[nearby_index] = min(
+                    obstacle_distance_map[nearby_index],
+                    distance,
+                )
+
+        return obstacle_distance_map
+
+    def inflation_offsets(self):
+        if self.map_resolution <= 0.0:
+            return [(0, 0, 0.0)]
+
+        clearance_cells = self.clearance_cells()
+        offsets = []
+        for dy in range(-clearance_cells, clearance_cells + 1):
+            for dx in range(-clearance_cells, clearance_cells + 1):
+                cell_distance = math.hypot(dx, dy)
+                if cell_distance <= clearance_cells:
+                    offsets.append((dx, dy, cell_distance * self.map_resolution))
+
+        return offsets
+
+    def has_map_edge_clearance(self, cell):
+        if self.map_resolution <= 0.0:
+            return False
+
+        x, y = cell
+        clearance_cells = self.clearance_cells()
+        return (
+            x >= clearance_cells
+            and y >= clearance_cells
+            and x < self.map_width - clearance_cells
+            and y < self.map_height - clearance_cells
         )
 
-    def navigation_loop(self):
+    def clearance_cells(self):
+        if self.map_resolution <= 0.0:
+            return 0
 
-        if len(self.path) == 0:
-            self.get_logger().info("Navigation loop exit: zero path length")
-            return
+        return math.ceil(self.ROBOT_CLEARANCE_RADIUS / self.map_resolution)
 
-        if self.current_waypoint >= len(self.path):
+    def raw_value_blocked(self, value):
+        return value < 0 or value >= self.OCCUPIED_THRESHOLD
 
-            self.cmd_pub.publish(Twist())
+    def in_bounds(self, cell):
+        x, y = cell
+        return 0 <= x < self.map_width and 0 <= y < self.map_height
 
-            self.get_logger().info("Goal reached")
+    def map_index(self, cell):
+        x, y = cell
+        return y * self.map_width + x
 
-            self.path = []
+    def heuristic(self, cell, goal):
+        return math.hypot(goal[0] - cell[0], goal[1] - cell[1])
 
-            return
+    def yaw_from_quaternion(self, q):
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
 
-        gx, gy = self.path[self.current_waypoint]
+    def normalize_angle(self, angle):
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi:
+            angle += 2.0 * math.pi
+        return angle
 
-        wx, wy = self.grid_to_world(gx, gy)
+    def distance(self, x1, y1, x2, y2):
+        return math.hypot(x2 - x1, y2 - y1)
 
-        dx = wx - self.robot_x
-        dy = wy - self.robot_y
-
-        distance = math.hypot(dx, dy)
-
-        if distance < 0.10:
-
-            self.current_waypoint += 1
-            self.get_logger().info("Reached current waypoint")
-            return
-
-        desired_heading = math.atan2(dy, dx)
-
-        #
-        # This assumes robot heading = 0.
-        #
-        # Replace with actual yaw from odometry/TF.
-        #
-
-        heading_error = desired_heading - self.robot_yaw
-
-        while heading_error > math.pi:
-            heading_error -= 2 * math.pi
-
-        while heading_error < -math.pi:
-            heading_error += 2 * math.pi
-
-        cmd = TargetVector()
-
-        distance = math.hypot(dx, dy)
-
-        heading_error = desired_heading - self.robot_yaw
-
-        heading_error = math.atan2(
-            math.sin(heading_error),
-            math.cos(heading_error)
-        )
-
-        cmd.angular = 2.0 * heading_error
-
-        if abs(heading_error) < 0.5:
-            cmd.linear = min(0.35, 0.8 * distance)
-        else:
-            cmd.linear = 0.0
-
-        self.cmd_pub.publish(cmd)
-
-    def inflate_map(self):
-
-        if self.map is None:
-            self.get_logger().info("Cannot plan path: no map")
-            return
-
-        # Start with a copy of the original map
-        self.inflated_map = self.map.copy()
-
-        # Convert inflation radius from meters to cells
-        radius_cells = math.ceil(
-            self.inflation_radius / self.resolution
-        )
-
-        occupied = np.argwhere(self.map > 50)
-
-        for y, x in occupied:
-
-            for dy in range(-radius_cells, radius_cells + 1):
-                for dx in range(-radius_cells, radius_cells + 1):
-
-                    # Circular inflation
-                    if dx*dx + dy*dy > radius_cells*radius_cells:
-                        continue
-
-                    nx = x + dx
-                    ny = y + dy
-
-                    if 0 <= nx < self.width and 0 <= ny < self.height:
-
-                        self.inflated_map[ny][nx] = 100
+    def clamp(self, value, minimum, maximum):
+        return max(minimum, min(value, maximum))
 
 
 def main():
     rclpy.init()
-    navigation= Navigation()
+    navigation = Navigation()
     try:
         rclpy.spin(navigation)
     except KeyboardInterrupt:
         pass
     finally:
-        navigation.destroy_node()
-        rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
+        try:
+            if rclpy.ok():
+                navigation.publisher.publish(TargetVector())
+        except Exception:
+            pass
+        try:
+            navigation.destroy_node()
+        except (Exception, KeyboardInterrupt):
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
