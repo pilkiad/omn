@@ -16,9 +16,9 @@ def generate_launch_description():
     package_share = get_package_share_directory('navigation_gazebo')
     ros_gz_sim_share = get_package_share_directory('ros_gz_sim')
 
-    world_path = os.path.join(package_share, 'worlds', 'nav_smoke.sdf')
+    world_path = os.path.join(package_share, 'worlds', 'my_map_1.sdf')
     bridge_config = os.path.join(package_share, 'config', 'nav_smoke_bridge.yaml')
-    map_yaml = os.path.join(package_share, 'maps', 'nav_smoke_map.yaml')
+    map_yaml = os.path.join(package_share, 'maps', 'my_map_1.yaml')
     rviz_config_path = os.path.join(package_share, 'rviz', 'planned_path.rviz')
 
     gui = LaunchConfiguration('gui')
@@ -28,8 +28,6 @@ def generate_launch_description():
     rviz_config = LaunchConfiguration('rviz_config')
 
     gz_sim_launch = os.path.join(ros_gz_sim_share, 'launch', 'gz_sim.launch.py')
-    gz_server_launch = os.path.join(ros_gz_sim_share, 'launch', 'gz_server.launch.py')
-
     return LaunchDescription([
         DeclareLaunchArgument(
             'gui',
@@ -66,9 +64,10 @@ def generate_launch_description():
             condition=IfCondition(gui),
         ),
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(gz_server_launch),
+            PythonLaunchDescriptionSource(gz_sim_launch),
             launch_arguments={
-                'world_sdf_file': world_path,
+                'gz_args': f'-s -r {world_path}',
+                'on_exit_shutdown': 'true',
             }.items(),
             condition=UnlessCondition(gui),
         ),
@@ -126,6 +125,12 @@ def generate_launch_description():
             name='map_to_odom',
             output='screen',
             arguments=[
+                '--x', '1.060667',
+                '--y', '-1.114333',
+                '--z', '0.0',
+                '--roll', '0.0',
+                '--pitch', '0.0',
+                '--yaw', '0.0',
                 '--frame-id', 'map',
                 '--child-frame-id', 'odom',
             ],
@@ -138,6 +143,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'output_frame_id': 'map',
+                'initial_x': 1.060667,
+                'initial_y': -1.114333,
+                'initial_yaw': 0.0,
                 'use_sim_time': use_sim_time,
             }],
         ),

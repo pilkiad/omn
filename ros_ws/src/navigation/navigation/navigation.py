@@ -22,7 +22,7 @@ class Navigation(Node):
         self.has_pose = False
 
         self.env_map = []
-        self.inflated_map = []
+        self.obstacle_distance_map = []
         self.map_width = 0
         self.map_height = 0
         self.map_resolution = 0.0
@@ -40,23 +40,18 @@ class Navigation(Node):
         self.last_planned_goal = None
 
         self.OCCUPIED_THRESHOLD = 50
-        self.ROBOT_LENGTH = 0.36
-        self.ROBOT_WIDTH = 0.28
+        self.ROBOT_RADIUS = 0.33
         self.ROBOT_SAFETY_MARGIN = 0.10
-        self.ROBOT_PLANNING_LENGTH = self.ROBOT_LENGTH * (1.0 + self.ROBOT_SAFETY_MARGIN)
-        self.ROBOT_PLANNING_WIDTH = self.ROBOT_WIDTH * (1.0 + self.ROBOT_SAFETY_MARGIN)
-        # Use lateral clearance on the coarse grid so passable doorways stay open.
-        self.ROBOT_CLEARANCE_RADIUS = min(
-            self.ROBOT_PLANNING_LENGTH,
-            self.ROBOT_PLANNING_WIDTH,
-        ) / 2.0
-        self.INFLATED_CELL_COST = 4.0
+        # Clearance is measured from the robot center on the planning grid.
+        # self.ROBOT_CLEARANCE_RADIUS = self.ROBOT_RADIUS * (1.0 + self.ROBOT_SAFETY_MARGIN)
+        self.ROBOT_CLEARANCE_RADIUS = 0.7
+        self.MAX_INFLATION_COST = 8.0
         self.GOAL_TOLERANCE = 0.12
         self.WAYPOINT_TOLERANCE = 0.10
         self.WAYPOINT_LOOKAHEAD = 2
-        self.LINEAR_SPEED = 0.10
+        self.LINEAR_SPEED = 0.18
         self.ANGULAR_GAIN = 1.6
-        self.MAX_ANGULAR_SPEED = 0.7
+        self.MAX_ANGULAR_SPEED = 0.9
 
         planned_path_qos = QoSProfile(
             depth=1,
@@ -94,13 +89,27 @@ class Navigation(Node):
         self.timer = self.create_timer(0.2, self.timer_callback)
 
     def map_callback(self, msg):
+        env_map = list(msg.data)
+        map_changed = (
+            not self.has_map
+            or self.map_width != msg.info.width
+            or self.map_height != msg.info.height
+            or self.map_resolution != msg.info.resolution
+            or self.map_origin_x != msg.info.origin.position.x
+            or self.map_origin_y != msg.info.origin.position.y
+            or self.env_map != env_map
+        )
+
+        if not map_changed:
+            return
+
         self.map_width = msg.info.width
         self.map_height = msg.info.height
         self.map_resolution = msg.info.resolution
         self.map_origin_x = msg.info.origin.position.x
         self.map_origin_y = msg.info.origin.position.y
-        self.env_map = list(msg.data)
-        self.inflated_map = self.inflate_obstacles()
+        self.env_map = env_map
+        self.obstacle_distance_map = self.build_obstacle_distance_map()
         self.has_map = True
         self.clear_planned_path()
 
@@ -117,6 +126,9 @@ class Navigation(Node):
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
         self.has_goal = True
+        self.get_logger().info(
+            f'Received goal pose x={self.goal_x:.3f}, y={self.goal_y:.3f}'
+        )
         self.clear_planned_path()
 
     def publish_planned_path(self):
@@ -151,7 +163,9 @@ class Navigation(Node):
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
             self.clear_planned_path()
+            self.has_goal = False
             self.publisher.publish(msg)
+            self.get_logger().info('Goal succeeded')
             return
 
         start = self.world_to_grid(self.x, self.y)
@@ -329,22 +343,33 @@ class Navigation(Node):
         return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
 
     def inflation_penalty(self, cell):
-        if self.is_inflated(cell):
-            return self.INFLATED_CELL_COST
-        return 0.0
+        if self.ROBOT_CLEARANCE_RADIUS <= 0.0:
+            return 0.0
+
+        obstacle_distance = self.obstacle_distance(cell)
+        if obstacle_distance >= self.ROBOT_CLEARANCE_RADIUS:
+            return 0.0
+
+        closeness = (
+            self.ROBOT_CLEARANCE_RADIUS - obstacle_distance
+        ) / self.ROBOT_CLEARANCE_RADIUS
+        return self.MAX_INFLATION_COST * closeness * closeness
 
     def is_inflated(self, cell):
-        if len(self.inflated_map) != len(self.env_map):
-            return False
+        return self.obstacle_distance(cell) < self.ROBOT_CLEARANCE_RADIUS
+
+    def obstacle_distance(self, cell):
+        if len(self.obstacle_distance_map) != len(self.env_map):
+            return math.inf
 
         if not self.in_bounds(cell):
-            return False
+            return math.inf
 
         index = self.map_index(cell)
-        if index >= len(self.inflated_map):
-            return False
+        if index >= len(self.obstacle_distance_map):
+            return math.inf
 
-        return self.inflated_map[index]
+        return self.obstacle_distance_map[index]
 
     def is_raw_free(self, cell):
         if not self.in_bounds(cell):
@@ -356,10 +381,10 @@ class Navigation(Node):
 
         return not self.raw_value_blocked(self.env_map[index])
 
-    def inflate_obstacles(self):
-        inflated_map = [False] * len(self.env_map)
+    def build_obstacle_distance_map(self):
+        obstacle_distance_map = [math.inf] * len(self.env_map)
         if not self.env_map or self.map_width <= 0 or self.map_height <= 0:
-            return inflated_map
+            return obstacle_distance_map
 
         offsets = self.inflation_offsets()
         for index, value in enumerate(self.env_map):
@@ -368,23 +393,30 @@ class Navigation(Node):
 
             obstacle_x = index % self.map_width
             obstacle_y = index // self.map_width
-            for dx, dy in offsets:
-                inflated_cell = (obstacle_x + dx, obstacle_y + dy)
-                if self.in_bounds(inflated_cell):
-                    inflated_map[self.map_index(inflated_cell)] = True
+            for dx, dy, distance in offsets:
+                nearby_cell = (obstacle_x + dx, obstacle_y + dy)
+                if not self.in_bounds(nearby_cell):
+                    continue
 
-        return inflated_map
+                nearby_index = self.map_index(nearby_cell)
+                obstacle_distance_map[nearby_index] = min(
+                    obstacle_distance_map[nearby_index],
+                    distance,
+                )
+
+        return obstacle_distance_map
 
     def inflation_offsets(self):
         if self.map_resolution <= 0.0:
-            return [(0, 0)]
+            return [(0, 0, 0.0)]
 
         clearance_cells = self.clearance_cells()
         offsets = []
         for dy in range(-clearance_cells, clearance_cells + 1):
             for dx in range(-clearance_cells, clearance_cells + 1):
-                if math.hypot(dx, dy) <= clearance_cells:
-                    offsets.append((dx, dy))
+                cell_distance = math.hypot(dx, dy)
+                if cell_distance <= clearance_cells:
+                    offsets.append((dx, dy, cell_distance * self.map_resolution))
 
         return offsets
 
