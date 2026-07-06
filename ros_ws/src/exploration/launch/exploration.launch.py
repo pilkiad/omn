@@ -6,8 +6,8 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='exploration',
-            executable='blind_exploration',
-            name='blind_exploration',
+            executable='exploration',
+            name='exploration',
         ),
         Node(
             package='collision_avoidance',
