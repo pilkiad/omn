@@ -1,0 +1,16 @@
+slam_toolbox:
+  ros__parameters:
+
+    mode: localization
+
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+
+    scan_topic: /scan # LiDAR topic
+
+    map_file_name: /home/niau01/Schreibtisch/omn/ros_ws/src/navigation_gazebo/maps/my_map_1 # change to where map is saved to
+
+    map_start_pose: [0.0, 0.0, 0.0]
+
+    max_laser_range: 8.0
