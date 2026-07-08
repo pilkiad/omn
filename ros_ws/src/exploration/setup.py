@@ -28,7 +28,8 @@ setup(
     entry_points={
         'console_scripts': [
             'blind_exploration = exploration.blind_exploration:main',
-            'exploration = exploration.exploration:main'
+            'exploration = exploration.exploration:main',
+            'exploration_progress_reporter = exploration.exploration_progress_reporter:main'
         ],
     },
 )

@@ -23,14 +23,14 @@ class SystemManagerNode(Node):
     def __init__(self):
         super().__init__('system_manager')
         self.internal_state = InternalState.UNCONFIGURED
-        
+
         # Platzhalter für ROS-Entitäten
         self.confidence_sub = None
         self.save_map_client = None
-        
+
         # Variable für die zeitliche Stabilitätsprüfung (Debouncing)
         self.threshold_start_time = None
-        
+
         self.get_logger().info("System-Manager initialisiert. Lifecycle-Status: UNCONFIGURED")
 
     # ==========================================
@@ -38,10 +38,10 @@ class SystemManagerNode(Node):
     # ==========================================
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Konfiguriere Knoten...")
-        
+
         # Callback-Gruppe für asynchrone Service-Aufrufe
         self.cb_group = MutuallyExclusiveCallbackGroup()
-        
+
         # Abonnent für den SLAM Analyzer: QoS exakt auf 10 (Symmetrie zum Publisher)
         self.confidence_sub = self.create_subscription(
             String,
@@ -50,30 +50,30 @@ class SystemManagerNode(Node):
             10,
             callback_group=self.cb_group
         )
-        
+
         # Service-Client für SLAM Toolbox
         self.save_map_client = self.create_client(
-            SaveMap, 
+            SaveMap,
             '/slam_toolbox/save_map',
             callback_group=self.cb_group
         )
-        
+
         self.internal_state = InternalState.CONFIGURED
         self.get_logger().info("Konfiguration abgeschlossen. Lifecycle-Status: INACTIVE")
         return TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Aktiviere Knoten...")
-        
+
         # Warten, bis der Service verfügbar ist
         if not self.save_map_client.wait_for_service(timeout_sec=5.0):
             self.get_logger().error("Service /slam_toolbox/save_map nicht verfügbar! Bitte SLAM-Toolbox prüfen.")
             return TransitionCallbackReturn.FAILURE
-            
+
         self.internal_state = InternalState.WAIT_FOR_COMPLETION
         # Reset der Stabilitätsprüfung bei jedem Neustart
-        self.threshold_start_time = None 
-        
+        self.threshold_start_time = None
+
         self.get_logger().info("Knoten aktiviert. Interne FSM: WAIT_FOR_COMPLETION. Warte auf Daten...")
         return TransitionCallbackReturn.SUCCESS
 
@@ -105,9 +105,9 @@ class SystemManagerNode(Node):
             # 1. JSON-String parsen
             data_dict = json.loads(msg.data)
             current_confidence = float(data_dict.get("confidence", 0.0))
-            
+
             # 2. Schwellenwert bestimmen
-            threshold = 50.0 if current_confidence > 1.0 else 0.5
+            threshold = 97.0 if current_confidence > 1.0 else 0.97
 
             # HEARTBEAT-LOG: Zeigt dir an, dass Daten aktiv verarbeitet werden
             self.get_logger().info(f"[Daten-Stream] Lese Confidence: {current_confidence:.4f} (Ziel: {threshold})")
@@ -115,7 +115,7 @@ class SystemManagerNode(Node):
             # 3. Zeitliche Stabilitätsprüfung (Debouncing)
             if current_confidence >= threshold:
                 current_time = self.get_clock().now()
-                
+
                 # Wenn dies das erste Mal ist, dass der Wert erreicht wird, starte die Uhr
                 if self.threshold_start_time is None:
                     self.threshold_start_time = current_time
@@ -124,9 +124,9 @@ class SystemManagerNode(Node):
                     # Berechne die verstrichene Zeit in Sekunden
                     elapsed_time = current_time - self.threshold_start_time
                     elapsed_seconds = elapsed_time.nanoseconds / 1e9
-                    
+
                     self.get_logger().info(f"Countdown: Stabil seit {elapsed_seconds:.1f}/5.0 Sekunden...")
-                    
+
                     # Wenn die 5 Sekunden voll sind, löse die Aktion aus
                     if elapsed_seconds >= 5.0:
                         self.get_logger().info(f"Stabilität von 5 Sekunden erfolgreich erreicht! Wechsle zu SAVE_MAP.")
@@ -150,9 +150,9 @@ class SystemManagerNode(Node):
         # Generiere einen eindeutigen Kartennamen basierend auf dem Zeitstempel
         map_name = f"auto_map_{int(time.time())}"
         req.name.data = map_name
-        
+
         self.get_logger().info(f"Sende Service-Call zum Speichern der Karte: '{map_name}'")
-        
+
         # Asynchroner Aufruf blockiert das System nicht
         future = self.save_map_client.call_async(req)
         future.add_done_callback(self.save_map_response_callback)
@@ -174,10 +174,10 @@ class SystemManagerNode(Node):
     def transition_to_stop_mapping(self):
         self.internal_state = InternalState.STOP_MAPPING
         self.get_logger().info("Interne FSM: STOP_MAPPING")
-        
+
         self.get_logger().info("Mapping-Prozess wird beendet (simuliert)...")
         time.sleep(1.0) # Simuliere die Dauer des Stoppvorgangs
-        
+
         self.transition_to_finished()
 
     def transition_to_finished(self):
@@ -188,7 +188,7 @@ class SystemManagerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = SystemManagerNode()
-    
+
     try:
         executor = rclpy.executors.MultiThreadedExecutor()
         executor.add_node(node)
