@@ -57,6 +57,7 @@ class CollisionAvoidance(Node):
 
     def target_vector_callback(self, msg):
         self.target_vector_received = True
+        self.target_vector_age = 0
         self.target_vector = [ msg.linear, msg.angular ]
         self.get_logger().info(f"Received new target vector")
 
@@ -77,12 +78,12 @@ class CollisionAvoidance(Node):
         if self.adjusted_vector[0] < -0.1:
             self.adjusted_vector[0] = -0.1
             self.get_logger().info(f"Clamped linear velocity to -0.1 (incoming)")
-        if self.adjusted_vector[1] > 0.1:
-            self.adjusted_vector[1] = 0.1
-            self.get_logger().info(f"Clamped angular velocity to 0.1 (incoming)")
-        if self.adjusted_vector[1] < -0.1:
-            self.adjusted_vector[1] = -0.1
-            self.get_logger().info(f"Clamped angular velocity to -0.1 (incoming)")
+        #if self.adjusted_vector[1] > 0.1:
+        #    self.adjusted_vector[1] = 0.1
+        #    self.get_logger().info(f"Clamped angular velocity to 0.1 (incoming)")
+        #if self.adjusted_vector[1] < -0.1:
+        #    self.adjusted_vector[1] = -0.1
+        #    self.get_logger().info(f"Clamped angular velocity to -0.1 (incoming)")
 
         # Define range of angles we are interested in
         # (left is -90, forward is 0, right is 90)
@@ -118,9 +119,8 @@ class CollisionAvoidance(Node):
             self.unstuck_counter = 150
         if self.unstuck_counter > 0:
             self.unstuck_counter = self.unstuck_counter - 1
-            # TODO: re-add
-            #self.adjusted_vector[1] = self.unstuck_spin_direction
-            #self.adjusted_vector[0] = 0.0
+            self.adjusted_vector[1] = self.unstuck_spin_direction
+            self.adjusted_vector[0] = 0.0
         else:
             self.unstuck_spin_direction = random.choice([-0.5, 0.5])
 
@@ -151,10 +151,10 @@ class CollisionAvoidance(Node):
 
         # Publish
         self.publisher.publish(msg)
-        self.get_logger().info(f"adjusted_vector={self.adjusted_vector}, target_vector={self.target_vector} s={self.stuck_counter}")
+        self.get_logger().info(f"adjusted_vector={self.adjusted_vector}, target_vector={self.target_vector} s={self.stuck_counter} age={self.target_vector_age}")
 
         self.target_vector_age += 1
-        if self.target_vector_age > 30:
+        if self.target_vector_age > 10:
             self.target_vector_received = False
             self.target_vector_age = 0
             self.get_logger().info("Target vector died of old age")
