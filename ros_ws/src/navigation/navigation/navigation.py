@@ -95,7 +95,7 @@ class Navigation(Node):
 
     def get_tf(self):
         try:
-            t = self.tf_buffer.lookup_transform("laser", "base_footprint", rclpy.time.Time())
+            t = self.tf_buffer.lookup_transform("map", "base_footprint", rclpy.time.Time())
             self.x = t.transform.translation.x
             self.y = t.transform.translation.y
             self.yaw = self.yaw_from_quaternion(t.transform.rotation)
