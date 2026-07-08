@@ -60,11 +60,11 @@ class CubeWegpunktNode(Node):
         self.get_logger().info(f'Cube Node gestartet. Modus: {"POLAR (Linear/Angular für Gruppe)" if self.send_polar_instead_of_xy else "CARTESIAN (X/Y)"}')
 
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
-        lower_red1 = np.array([0, 140, 80])
+        lower_red1 = np.array([0, 140, 70])
         upper_red1 = np.array([5, 255, 255])
         mask1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-        lower_red2 = np.array([174, 140, 80])
+        lower_red2 = np.array([174, 140, 70])
         upper_red2 = np.array([179, 255, 255])
         mask2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
 
@@ -158,18 +158,16 @@ class CubeWegpunktNode(Node):
 
         self.video_writer.write(frame)
 
-        # Custom Message befüllen und senden
+        if val_linear == 0.0 and val_angular == 0.0:
+            return
+
         msg = TargetVector()
         msg.linear = val_linear
         msg.angular = val_angular
-        # Hinweis: Da TargetVector vermutlich kein '.z' Feld besitzt, senden wir hier nur, wenn ein Würfel da ist.
-        # Wenn kein Würfel im Bild ist, sendet die Node 0.0 (Roboter bleibt stehen oder weicht nur Lidar aus).
         self.publisher_.publish(msg)
 
         if cube_detected > 0:
             self.get_logger().info(f"Sende Target -> Linear: {val_linear:.2f}, Angular: {val_angular:.2f}")
-        else:
-            self.get_logger().info("Sende Target -> Kein Würfel sichtbar (0,0)")
 
         #cv2.imshow("Cube Wegpunkt Tracker", frame)
         #cv2.waitKey(1)
