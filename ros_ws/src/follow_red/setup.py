@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'basic_navigation'
+package_name = 'follow_red'
 
 setup(
     name=package_name,
@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'basic_navigation = basic_navigation.basic_navigation:main',
+            'follow_red = follow_red.follow_red:main'
         ],
     },
 )

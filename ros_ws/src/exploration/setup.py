@@ -1,6 +1,8 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'basic_navigation'
+package_name = 'exploration'
 
 setup(
     name=package_name,
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +27,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'basic_navigation = basic_navigation.basic_navigation:main',
+            'blind_exploration = exploration.blind_exploration:main',
+            'exploration = exploration.exploration:main'
         ],
     },
 )

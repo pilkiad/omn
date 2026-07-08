@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'basic_navigation'
+package_name = 'collision_avoidance'
 
 setup(
     name=package_name,
@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'basic_navigation = basic_navigation.basic_navigation:main',
+            'collision_avoidance = collision_avoidance.collision_avoidance:main'
         ],
     },
 )

@@ -1,3 +1,6 @@
 build/
 install/
 log/
+data/
+ros2-documentation/
+plan.md

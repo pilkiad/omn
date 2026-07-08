@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mock_lifecycle_nodes</name>
+  <version>0.1.0</version>
+  <description>
+    Fake stand-ins for teammates' LifecycleNodes (camera, lidar, mapping,
+    localization, navigation, motion_controller), used only to test the
+    System Manager before real teammate packages exist. Delete this
+    package once real nodes are ready -- it is not part of the final robot.
+  </description>
+  <maintainer email="you@example.com">Shein</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,6 +1,8 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'basic_navigation'
+package_name = 'localization'
 
 setup(
     name=package_name,
@@ -10,11 +12,12 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='arian',
-    maintainer_email='pilkiad+github@proton.me',
+    maintainer='nils',
+    maintainer_email='a1000000@uni-bremen.de',
     description='TODO: Package description',
     license='Apache-2.0',
     extras_require={
@@ -24,7 +27,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'basic_navigation = basic_navigation.basic_navigation:main',
+            'localization = localization.localization:main'
         ],
     },
 )
