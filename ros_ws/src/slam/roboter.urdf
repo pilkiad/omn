@@ -1,0 +1,251 @@
+<?xml version="1.0"?>
+<robot name="mini_robot">
+
+  <material name="plate_green">
+    <color rgba="0.1 0.6 0.4 1.0"/>
+  </material>
+  
+  <material name="pillar_grey">
+    <color rgba="0.2 0.2 0.2 1.0"/>
+  </material>
+  
+  <material name="wheel_black">
+    <color rgba="0.1 0.1 0.1 1.0"/>
+  </material>
+
+  <material name="laser_dark_blue">
+    <color rgba="0.0 0.0 0.5 1.0"/>
+  </material>
+
+  <link name="base_footprint">
+    </link>
+
+  <joint name="joint_plate1" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="plate1"/>
+    <origin xyz="0 0 0.06" rpy="0 0 0"/>
+  </joint>
+  <link name="plate1">
+    <visual>
+      <geometry>
+        <cylinder radius="0.2" length="0.02"/>
+      </geometry>
+      <material name="plate_green"/>
+    </visual>
+  </link>
+
+  <joint name="joint_plate2" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="plate2"/>
+    <origin xyz="0 0 0.20" rpy="0 0 0"/>
+  </joint>
+  <link name="plate2">
+    <visual>
+      <geometry>
+        <cylinder radius="0.2" length="0.02"/>
+      </geometry>
+      <material name="plate_green"/>
+    </visual>
+  </link>
+
+  <joint name="joint_plate3" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="plate3"/>
+    <origin xyz="0 0 0.33" rpy="0 0 0"/>
+  </joint>
+  <link name="plate3">
+    <visual>
+      <geometry>
+        <cylinder radius="0.2" length="0.02"/>
+      </geometry>
+      <material name="plate_green"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar1_lower" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar1_lower"/>
+    <origin xyz="0.12 0.12 0.125" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar1_lower">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar2_lower" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar2_lower"/>
+    <origin xyz="0.12 -0.12 0.125" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar2_lower">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar3_lower" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar3_lower"/>
+    <origin xyz="-0.12 0.12 0.125" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar3_lower">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar4_lower" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar4_lower"/>
+    <origin xyz="-0.12 -0.12 0.125" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar4_lower">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar1_upper" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar1_upper"/>
+    <origin xyz="0.12 0.12 0.265" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar1_upper">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar2_upper" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar2_upper"/>
+    <origin xyz="0.12 -0.12 0.265" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar2_upper">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar3_upper" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar3_upper"/>
+    <origin xyz="-0.12 0.12 0.265" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar3_upper">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_pillar4_upper" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="pillar4_upper"/>
+    <origin xyz="-0.12 -0.12 0.265" rpy="0 0 0"/>
+  </joint>
+  <link name="pillar4_upper">
+    <visual>
+      <geometry>
+        <cylinder radius="0.01" length="0.13"/>
+      </geometry>
+      <material name="pillar_grey"/>
+    </visual>
+  </link>
+
+  <joint name="joint_wheel_1" type="continuous">
+    <parent link="base_footprint"/>
+    <child link="wheel_1"/>
+    <origin xyz="0.15 0.0 0.03" rpy="1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <link name="wheel_1">
+    <visual>
+      <geometry>
+        <cylinder radius="0.017" length="0.04"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+  </link>
+
+  <joint name="joint_wheel_2" type="continuous">
+    <parent link="base_footprint"/>
+    <child link="wheel_2"/>
+    <origin xyz="-0.15 0.0 0.03" rpy="1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <link name="wheel_2">
+    <visual>
+      <geometry>
+        <cylinder radius="0.017" length="0.04"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+  </link>
+
+  <joint name="joint_wheel_3" type="continuous">
+    <parent link="base_footprint"/>
+    <child link="wheel_3"/>
+    <origin xyz="0 0.19 0.05" rpy="1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <link name="wheel_3">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.03"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+  </link>
+
+  <joint name="joint_wheel_4" type="continuous">
+    <parent link="base_footprint"/>
+    <child link="wheel_4"/>
+    <origin xyz="0 -0.19 0.05" rpy="1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <link name="wheel_4">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.03"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+  </link>
+
+  <joint name="joint_laser" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="laser"/>
+    <origin xyz="0.0 0.0 0.365" rpy="0 0 0"/>
+  </joint>
+  <link name="laser">
+    <visual>
+      <geometry>
+        <cylinder radius="0.04" length="0.05"/>
+      </geometry>
+      <material name="laser_dark_blue"/>
+    </visual>
+  </link>
+
+</robot>
