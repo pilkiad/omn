@@ -4,7 +4,7 @@ slam_toolbox:
     # 0. GLOBALE ZEIT-SYNCHRONISATION
     # (Muss für echte Hardware zwingend auf 'false' stehen!)
     # ==========================================
-    use_sim_time: true
+    use_sim_time: false
 
     # ==========================================
     # 1. PLUGIN & SOLVER PARAMETER
@@ -19,7 +19,8 @@ slam_toolbox:
     # ==========================================
     # 2. ROS KNOTEN PARAMETER
     # ==========================================
-    odom_frame: odom #odom_20hz
+    #odom_frame: odom_downsampler 
+    odom_frame: odom
     map_frame: map
     base_frame: base_footprint
     scan_topic: /scan

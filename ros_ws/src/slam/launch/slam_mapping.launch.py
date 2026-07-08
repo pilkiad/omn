@@ -66,7 +66,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "slam_params_file": config_file,
-            "use_sim_time": "true",
+            "use_sim_time": "false",
         }.items()
     )
 
@@ -74,6 +74,13 @@ def generate_launch_description():
     package='slam',
     executable='odom_downsampler',
     name='odom_downsampler',
+    output='screen')
+
+
+    tf_filter_node = Node(
+    package='slam',
+    executable='tf_filter',
+    name='tf_filter',
     output='screen')
 
     # -------------------------------------------------
@@ -86,6 +93,13 @@ def generate_launch_description():
         output="screen"
     )
 
+    frontierManager = Node(
+        package="slam",
+        executable="FrontierManager",
+        name="frontier_manager_node",
+        output="screen"
+    )
+
     # -------------------------------------------------
     # LaunchDescription
     # -------------------------------------------------
@@ -93,5 +107,7 @@ def generate_launch_description():
         static_tf_node,
         slam_toolbox_launch,
         slam_analyzer_node,
-       odom_downsampler_node
+       odom_downsampler_node,
+       tf_filter_node,
+       frontierManager
     ])

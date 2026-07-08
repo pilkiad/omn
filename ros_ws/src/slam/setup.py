@@ -30,6 +30,8 @@ setup(
         'console_scripts': [
             'slam_analyzer = slam.slam_analyzer:main',
             'odom_downsampler = slam.odom_downsampler:main',
+            'tf_filter = slam.tf_filter:main',
+            'FrontierManager=slam.FrontierManager:main'
         ],
-    },
+    }
 )

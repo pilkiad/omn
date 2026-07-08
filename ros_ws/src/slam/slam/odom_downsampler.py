@@ -11,7 +11,7 @@ class OdomDownsampler(Node):
         super().__init__('odom_downsampler')
         
         # Konfiguration der Ziel-Frequenz
-        self.target_frequency = 12.0  # Hz
+        self.target_frequency = 10.0  # Hz
         self.timer_period = 1.0 / self.target_frequency
         
         self.latest_msg = None
