@@ -32,6 +32,7 @@ class CollisionAvoidance(Node):
         # Behavioural constants
         self.MAX_SENSOR_RANGE = 0.6                 # Maximum obstacle distance that robot will alter curse
         self.DAMPING_MULTIPLIER = [ 0.015, 0.015 ]  # How much obstacle detection should change the target direction (linear, angular)
+        self.MAX_LINEAR_VELOCITY = 0.125
 
         # Prepare some default values
         self.stuck_counter = 0
@@ -72,12 +73,12 @@ class CollisionAvoidance(Node):
         # Clamp movement vector
         # We do this once after receiving the vector to ensure we start working with safe values
         # and once after collision avoidance was calculate to ensure we _produce_ safe values
-        if self.adjusted_vector[0] > 0.1:
-            self.adjusted_vector[0] = 0.1
-            self.get_logger().info(f"Clamped linear velocity to 0.1 (incoming)")
-        if self.adjusted_vector[0] < -0.1:
-            self.adjusted_vector[0] = -0.1
-            self.get_logger().info(f"Clamped linear velocity to -0.1 (incoming)")
+        if self.adjusted_vector[0] > self.MAX_LINEAR_VELOCITY:
+            self.adjusted_vector[0] = self.MAX_LINEAR_VELOCITY
+            self.get_logger().warn(f"Clamped linear velocity to {self.MAX_LINEAR_VELOCITY} (incoming)")
+        if self.adjusted_vector[0] < -self.MAX_LINEAR_VELOCITY:
+            self.adjusted_vector[0] = -self.MAX_LINEAR_VELOCITY
+            self.get_logger().warn(f"Clamped linear velocity to -{self.MAX_LINEAR_VELOCITY} (incoming)")
         #if self.adjusted_vector[1] > 0.1:
         #    self.adjusted_vector[1] = 0.1
         #    self.get_logger().info(f"Clamped angular velocity to 0.1 (incoming)")
@@ -116,13 +117,13 @@ class CollisionAvoidance(Node):
             self.stuck_counter = 0
         # Unstuck self by rotating ~180 degrees
         if self.stuck_counter > 100:
-            self.unstuck_counter = 150
+            self.unstuck_counter = random.choice([50, 100, 150, 200])
         if self.unstuck_counter > 0:
             self.unstuck_counter = self.unstuck_counter - 1
             self.adjusted_vector[1] = self.unstuck_spin_direction
             self.adjusted_vector[0] = 0.0
         else:
-            self.unstuck_spin_direction = random.choice([-0.5, 0.5])
+            self.unstuck_spin_direction = random.choice([-0.5, -0.25, -0.1, 0.1, 0.25, 0.5])
 
     def timer_callback(self):
         msg = Twist()
@@ -138,12 +139,12 @@ class CollisionAvoidance(Node):
         # Clamp movement vector
         # We do this once after receiving the vector to ensure we start working with safe values
         # and once after collision avoidance was calculate to ensure we _produce_ safe values
-        if self.adjusted_vector[0] > 0.1:
-            self.adjusted_vector[0] = 0.1
-            self.get_logger().info(f"Clamped linear velocity to 0.1 (outgoing)")
-        if self.adjusted_vector[0] < -0.1:
-            self.adjusted_vector[0] = -0.1
-            self.get_logger().info(f"Clamped linear velocity to -0.1 (outgoing)")
+        if self.adjusted_vector[0] > self.MAX_LINEAR_VELOCITY:
+            self.adjusted_vector[0] = self.MAX_LINEAR_VELOCITY
+            self.get_logger().warn(f"Clamped linear velocity to {self.MAX_LINEAR_VELOCITY} (outgoing)")
+        if self.adjusted_vector[0] < -self.MAX_LINEAR_VELOCITY:
+            self.adjusted_vector[0] = -self.MAX_LINEAR_VELOCITY
+            self.get_logger().warn(f"Clamped linear velocity to -{self.MAX_LINEAR_VELOCITY} (outgoing)")
 
         # Move according to target vector
         msg.linear.x = self.adjusted_vector[0]
@@ -157,7 +158,7 @@ class CollisionAvoidance(Node):
         if self.target_vector_age > 10:
             self.target_vector_received = False
             self.target_vector_age = 0
-            self.get_logger().info("Target vector died of old age")
+            self.get_logger().warn("Target vector died of old age")
 
 def main():
     rclpy.init()

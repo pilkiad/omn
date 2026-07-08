@@ -31,7 +31,7 @@ class BlindExploration(Node):
         self.WALL_HUG_STRENGTH = 0.1                # Angular strength used for turning
         self.WALL_HUG_MIN_LINEAR_SPEED = 0.03       # How fast the robot needs to be in order to wall hug
         self.DAMPING_MULTIPLIER = [ 0.02, 0.02 ]    # How much obstacle detection should change the target direction (linear, angular)
-        self.DEFAULT_TARGET_VECTOR = [ 0.1, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
+        self.DEFAULT_TARGET_VECTOR = [ 0.125, 0.0 ]   # Default desired movement direction (linear, angular) -> forward
         self.DRIFT_MAX = [ 0.05, 0.1 ]              # Maximum random drift (offset from default target vector)
         self.DRIFT_SHUFFLE_MAX_TIME = 15            # Num. movement commands before recalculating random drift
 
