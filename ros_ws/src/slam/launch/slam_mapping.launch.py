@@ -42,7 +42,7 @@ def generate_launch_description():
         arguments=[
             "0.10",
             "0.0",
-            "0.20",
+            "0.15",
             "0.0",
             "0.0",
             "0.0",
