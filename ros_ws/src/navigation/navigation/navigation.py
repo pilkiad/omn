@@ -10,6 +10,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
+from tf2_ros import TransformListener, Buffer
 
 
 class Navigation(Node):
@@ -74,7 +75,7 @@ class Navigation(Node):
 
         self.pos_subscription = self.create_subscription(
             PoseStamped,
-            '/pos',
+            '/pose',
             self.pos_callback,
             1
         )
@@ -88,6 +89,20 @@ class Navigation(Node):
 
         self.publisher = self.create_publisher(TargetVector, '/target_vector', 1)
         self.timer = self.create_timer(0.2, self.timer_callback)
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_timer = self.create_timer(0.1, self.get_tf)
+
+    def get_tf(self):
+        try:
+            t = self.tf_buffer.lookup_transform("laser", "base_footprint", rclpy.time.Time())
+            self.x = t.transform.translation.x
+            self.y = t.transform.translation.y
+            self.yaw = self.yaw_from_quaternion(t.transform.rotation)
+            self.has_pose = True
+            self.get_logger().info(f"Got new position")
+        except Exception as e:
+            self.get_logger().info(f"No transform: " + str(e))
 
     def map_callback(self, msg):
         env_map = list(msg.data)
@@ -159,7 +174,8 @@ class Navigation(Node):
         msg = TargetVector()
 
         if not self.ready_to_plan():
-            self.publisher.publish(msg)
+            #self.publisher.publish(msg)
+            self.get_logger().info(f"Can't plan, not ready: has map? {self.has_map}, has pose? {self.has_pose}, has goal? {self.has_goal}")
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:

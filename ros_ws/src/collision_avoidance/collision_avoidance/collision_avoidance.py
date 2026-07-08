@@ -37,6 +37,7 @@ class CollisionAvoidance(Node):
         self.stuck_counter = 0
         self.unstuck_counter = 0
         self.unstuck_spin_direction = 0.5
+        self.target_vector_age = 0
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
@@ -57,6 +58,7 @@ class CollisionAvoidance(Node):
     def target_vector_callback(self, msg):
         self.target_vector_received = True
         self.target_vector = [ msg.linear, msg.angular ]
+        self.get_logger().info(f"Received new target vector")
 
     def scan_callback(self, msg):
         self.lidar_received = True
@@ -116,8 +118,9 @@ class CollisionAvoidance(Node):
             self.unstuck_counter = 150
         if self.unstuck_counter > 0:
             self.unstuck_counter = self.unstuck_counter - 1
-            self.adjusted_vector[1] = self.unstuck_spin_direction
-            self.adjusted_vector[0] = 0.0
+            # TODO: re-add
+            #self.adjusted_vector[1] = self.unstuck_spin_direction
+            #self.adjusted_vector[0] = 0.0
         else:
             self.unstuck_spin_direction = random.choice([-0.5, 0.5])
 
@@ -141,12 +144,6 @@ class CollisionAvoidance(Node):
         if self.adjusted_vector[0] < -0.1:
             self.adjusted_vector[0] = -0.1
             self.get_logger().info(f"Clamped linear velocity to -0.1 (outgoing)")
-        if self.adjusted_vector[1] > 0.1:
-            self.adjusted_vector[1] = 0.1
-            self.get_logger().info(f"Clamped angular velocity to 0.1 (outgoing)")
-        if self.adjusted_vector[1] < -0.1:
-            self.adjusted_vector[1] = -0.1
-            self.get_logger().info(f"Clamped angular velocity to -0.1 (outgoing)")
 
         # Move according to target vector
         msg.linear.x = self.adjusted_vector[0]
@@ -155,6 +152,12 @@ class CollisionAvoidance(Node):
         # Publish
         self.publisher.publish(msg)
         self.get_logger().info(f"adjusted_vector={self.adjusted_vector}, target_vector={self.target_vector} s={self.stuck_counter}")
+
+        self.target_vector_age += 1
+        if self.target_vector_age > 30:
+            self.target_vector_received = False
+            self.target_vector_age = 0
+            self.get_logger().info("Target vector died of old age")
 
 def main():
     rclpy.init()

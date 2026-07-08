@@ -140,6 +140,7 @@ class Exploration(Node):
         self.map_height = msg.info.height
         self.map_origin = [ msg.info.origin.position.x, msg.info.origin.position.y ]
         self.map_resolution = msg.info.resolution
+        self.already_visited = []
 
 def main():
     rclpy.init()
