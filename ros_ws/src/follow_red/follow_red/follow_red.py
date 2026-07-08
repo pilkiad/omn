@@ -171,8 +171,8 @@ class CubeWegpunktNode(Node):
         else:
             self.get_logger().info("Sende Target -> Kein Würfel sichtbar (0,0)")
 
-        cv2.imshow("Cube Wegpunkt Tracker", frame)
-        cv2.waitKey(1)
+        #cv2.imshow("Cube Wegpunkt Tracker", frame)
+        #cv2.waitKey(1)
 
     def plot_data(self) -> None:
         if not self.path_x: return
