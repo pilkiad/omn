@@ -9,11 +9,17 @@ from rclpy.node import Node
 class OdomToPos(Node):
     def __init__(self):
         super().__init__('odom_to_pos')
+        self.declare_parameter('output_topic', '/pose')
         self.declare_parameter('output_frame_id', 'map')
         self.declare_parameter('initial_x', 0.0)
         self.declare_parameter('initial_y', 0.0)
         self.declare_parameter('initial_yaw', 0.0)
 
+        self.output_topic = (
+            self.get_parameter('output_topic')
+            .get_parameter_value()
+            .string_value
+        )
         self.output_frame_id = (
             self.get_parameter('output_frame_id')
             .get_parameter_value()
@@ -43,7 +49,11 @@ class OdomToPos(Node):
             self.odom_callback,
             10,
         )
-        self.publisher = self.create_publisher(PoseStamped, '/pos', 10)
+        self.publisher = self.create_publisher(
+            PoseStamped,
+            self.output_topic,
+            10,
+        )
 
     def odom_callback(self, msg):
         odom_pose = msg.pose.pose

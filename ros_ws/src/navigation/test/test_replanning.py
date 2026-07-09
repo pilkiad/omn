@@ -120,11 +120,15 @@ def _install_ros_stubs():
     rclpy.spin = lambda node: None
     rclpy.ok = lambda: False
     rclpy.shutdown = lambda: None
+    rclpy_time = types.ModuleType('rclpy.time')
+    rclpy_time.Time = lambda: object()
+    rclpy.time = rclpy_time
     rclpy_node = types.ModuleType('rclpy.node')
     rclpy_node.Node = _Node
     rclpy.node = rclpy_node
     sys.modules['rclpy'] = rclpy
     sys.modules['rclpy.node'] = rclpy_node
+    sys.modules['rclpy.time'] = rclpy_time
 
     rclpy_qos = types.ModuleType('rclpy.qos')
     rclpy_qos.DurabilityPolicy = types.SimpleNamespace(
@@ -133,6 +137,11 @@ def _install_ros_stubs():
     rclpy_qos.QoSProfile = _QoSProfile
     rclpy_qos.ReliabilityPolicy = types.SimpleNamespace(RELIABLE=object())
     sys.modules['rclpy.qos'] = rclpy_qos
+
+    tf2_ros = types.ModuleType('tf2_ros')
+    tf2_ros.Buffer = lambda *args, **kwargs: object()
+    tf2_ros.TransformListener = lambda *args, **kwargs: object()
+    sys.modules['tf2_ros'] = tf2_ros
 
 
 _install_ros_stubs()
