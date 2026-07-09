@@ -36,8 +36,8 @@ class Exploration(Node):
         self.publisher = self.create_publisher(PoseStamped, "/goal_pose", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
-        self.pose_subscription = self.create_subscription(PoseStamped, '/pos', self.pose_callback, 1)
-        self.exploration_time = self.create_timer(5, self.exploration_callback)
+        self.pose_subscription = self.create_subscription(PoseStamped, '/pose', self.pose_callback, 1)
+        self.exploration_time = self.create_timer(10, self.exploration_callback)
         self.marker_pub = self.create_publisher(MarkerArray, '/exploration_markers', 1)
 
     def target_vector_callback(self, msg):
@@ -90,9 +90,6 @@ class Exploration(Node):
         return (position[0], position[1]) in self.flood_fill_map
 
     def exploration_callback(self):
-        self.flood_fill()
-        self.get_logger().info("Searching for best exploration spot...")
-
         # Ensure some map has been received in the last n seconds to we have some current data to work with
         if self.env_map is None:
             self.get_logger().warn("Cannot explore: no current map")
@@ -103,6 +100,9 @@ class Exploration(Node):
         if self.target_vector != [ 0.0, 0.0 ]:
             self.get_logger().info("Waiting for standstill...")
             return
+
+        self.flood_fill()
+        self.get_logger().info("Searching for best exploration spot...")
 
         marker_array = MarkerArray()
         target_positions = []
