@@ -4,7 +4,7 @@ Gazebo Sim smoke-test harness for the `navigation` ROS 2 package.
 
 This package launches a simulated world, bridges the required Gazebo topics into
 ROS 2, starts a Nav2 map server, republishes the static map, converts Gazebo
-odometry into the `/pos` pose input expected by `navigation`, and converts
+odometry into the `/pose` pose input expected by `navigation`, and converts
 `/target_vector` commands into `/cmd_vel` for the simulated robot.
 
 ## Package Contents
@@ -103,7 +103,7 @@ The default launch sets up this ROS/Gazebo flow:
 4. `map_service_to_topic` calls `/map_server/map` and republishes the returned
    occupancy grid on `/map`.
 5. `odom_to_pos` subscribes to `/odom`, applies the configured initial map
-   offset, and publishes `geometry_msgs/PoseStamped` on `/pos`.
+   offset, and publishes `geometry_msgs/PoseStamped` on `/pose`.
 6. `navigation` consumes the map, scan, and pose inputs and publishes
    `collision_interfaces/TargetVector` on `/target_vector`.
 7. `target_vector_to_cmd_vel` converts `/target_vector` into
@@ -136,10 +136,11 @@ Parameters:
 ### `odom_to_pos`
 
 Converts `nav_msgs/msg/Odometry` from `/odom` into `geometry_msgs/msg/PoseStamped`
-on `/pos`, applying an initial pose offset into the map frame.
+on `/pose`, applying an initial pose offset into the map frame.
 
 Parameters:
 
+- `output_topic` - pose output topic, default `/pose`
 - `output_frame_id` - output frame, default `map`
 - `initial_x` - initial x offset in meters, default `0.0`
 - `initial_y` - initial y offset in meters, default `0.0`
@@ -176,7 +177,7 @@ ros2 topic echo /cmd_vel
 Watch the navigation pose input:
 
 ```bash
-ros2 topic echo /pos
+ros2 topic echo /pose
 ```
 
 Check the map server lifecycle state:

@@ -45,7 +45,7 @@ and `target_vector_to_cmd_vel` converts that into `/cmd_vel`.
 | Topic | Type | Source | Purpose |
 |---|---|---|---|
 | `/map` | `nav_msgs/msg/OccupancyGrid` | `map_server` or `map_service_to_topic` | Static occupancy grid used for A* planning. |
-| `/pos` | `geometry_msgs/msg/PoseStamped` | `odom_to_pos` | Robot pose in the map frame. |
+| `/pose` | `geometry_msgs/msg/PoseStamped` | `odom_to_pos` | Robot pose in the map frame. |
 | `/goal_pose` | `geometry_msgs/msg/PoseStamped` | RViz or another goal publisher | Target pose for navigation. |
 | `/clock` | `rosgraph_msgs/msg/Clock` | `nav_smoke_bridge` | Simulation time when `use_sim_time` is enabled. |
 
@@ -89,8 +89,8 @@ flowchart LR
   GZ -->|GZ /tf| Bridge
 
   Bridge -->|/odom nav_msgs/Odometry| OdomToPos
-  OdomToPos -->|/pos geometry_msgs/PoseStamped| Nav
-  OdomToPos -->|/pos| RViz
+  OdomToPos -->|/pose geometry_msgs/PoseStamped| Nav
+  OdomToPos -->|/pose| RViz
 
   MapServer -->|/map nav_msgs/OccupancyGrid| Nav
   MapServer -.->|/map_server/map service| MapRelay
@@ -122,7 +122,7 @@ The normal command path is:
 ```text
 Gazebo /odom
   -> nav_smoke_bridge /odom
-  -> odom_to_pos /pos
+  -> odom_to_pos /pose
   -> navigation /target_vector
   -> target_vector_to_cmd_vel /cmd_vel
   -> nav_smoke_bridge
@@ -134,7 +134,7 @@ The planning path is:
 ```text
 map_server /map
 RViz /goal_pose
-odom_to_pos /pos
+odom_to_pos /pose
   -> navigation
   -> /planned_path
 ```
@@ -153,7 +153,7 @@ Show relevant topics and types:
 ```bash
 ros2 topic list -t
 ros2 topic info -v /map
-ros2 topic info -v /pos
+ros2 topic info -v /pose
 ros2 topic info -v /goal_pose
 ros2 topic info -v /target_vector
 ros2 topic info -v /planned_path
