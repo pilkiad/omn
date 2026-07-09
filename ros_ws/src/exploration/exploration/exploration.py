@@ -11,12 +11,14 @@ from visualization_msgs.msg import Marker, MarkerArray
 import math
 import random
 import time
+from collections import deque
 
 class Exploration(Node):
     def __init__(self):
         super().__init__("exploration")
 
         self.MIN_DISTANCE_BETWEEN = 1.0 # Minimum distance a desirable position has to have to all previously explored positions
+        self.MIN_DISTANCE_BETWEEN_SQ = self.MIN_DISTANCE_BETWEEN ** 2
         self.MARGIN = 10
 
         self.target_vector = [ 0.0, 0.0 ]
@@ -58,41 +60,34 @@ class Exploration(Node):
             int((self.our_position[0] - self.map_origin[0]) / self.map_resolution),
             int((self.our_position[1] - self.map_origin[1]) / self.map_resolution)
         )
-        neighbors = [start_pos]
-        visited_neighbors = []
-        reachable_map = []
+        neighbors = deque([start_pos])
+        visited_neighbors = set()
+        reachable_map = set()
 
-        while len(neighbors) > 0 and len(visited_neighbors) < 25000:
-            neighbor = neighbors[0]
+        while len(neighbors) > 0:
+            neighbor = neighbors.popleft()
             cell = self.get_cell_at(neighbor[0], neighbor[1])
 
-            if cell != 0:
-                visited_neighbors.append(neighbor)
-                neighbors.remove(neighbor)
-                continue
             if neighbor in visited_neighbors:
-                neighbors.remove(neighbor)
                 continue
 
-            neighbors.remove(neighbor)
-            visited_neighbors.append(neighbor)
-            reachable_map.append(neighbor)
+            visited_neighbors.add(neighbor)
 
-            neighbors.append([neighbor[0]+1,neighbor[1]])
-            neighbors.append([neighbor[0]-1,neighbor[1]])
-            neighbors.append([neighbor[0],neighbor[1]+1])
-            neighbors.append([neighbor[0],neighbor[1]-1])
+            if cell != 0:
+                continue
 
-            #print("Size:", self.map_width * self.map_height, "Visited:", len(visited_neighbors), "Reachable:", len(reachable_map), "Ratio:", len(reachable_map)/len(visited_neighbors))
+            reachable_map.add(neighbor)
+
+            neighbors.append((neighbor[0]+1,neighbor[1]))
+            neighbors.append((neighbor[0]-1,neighbor[1]))
+            neighbors.append((neighbor[0],neighbor[1]+1))
+            neighbors.append((neighbor[0],neighbor[1]-1))
 
         self.flood_fill_map = reachable_map
         self.get_logger().info("Completed flood fill")
 
     def is_reachable(self, position):
-        for reachable_pos in self.flood_fill_map:
-            if reachable_pos[0] == position[0] and reachable_pos[1] == position[1]:
-                return True
-        return False
+        return (position[0], position[1]) in self.flood_fill_map
 
     def exploration_callback(self):
         self.flood_fill()
@@ -123,8 +118,11 @@ class Exploration(Node):
                 # Check if we have been close to this position already in the past
                 skip = False
                 for already_visited_position in self.already_visited:
-                    if self.distance(position, already_visited_position) < self.MIN_DISTANCE_BETWEEN:
+                    dx = position[0] - already_visited_position[0]
+                    dy = position[1] - already_visited_position[1]
+                    if dx*dx + dy*dy < self.MIN_DISTANCE_BETWEEN_SQ:
                         skip = True
+                        break
                 if skip:
                     continue
 
@@ -137,19 +135,6 @@ class Exploration(Node):
                     self.get_cell_at(x, y-1)
                 ]
 
-                empty_count = 0
-                wall_count = 0
-                for oy in range(-5, 5):
-                    for ox in range(-5, 5):
-                        other_cell = self.get_cell_at(x+ox,y+oy)
-                        if other_cell == -1:
-                            empty_count += 1
-                        elif self.get_cell_at(x+ox,y+oy) > 0:
-                            wall_count += 1
-
-                # Only look at free cells
-                if cell_value != 0 or empty_count < 10 or wall_count > 3 or not self.is_reachable([x,y]):
-                    continue
 
                 # Atleast one neighbor needs to be marked as "free" to consider the position reachable
                 has_empty = False
@@ -166,17 +151,32 @@ class Exploration(Node):
                 if not (has_empty and has_full and not has_wall):
                     continue
 
+                empty_count = 0
+                wall_count = 0
+                for oy in range(-5, 5):
+                    for ox in range(-5, 5):
+                        other_cell = self.get_cell_at(x+ox,y+oy)
+                        if other_cell == -1:
+                            empty_count += 1
+                        elif other_cell > 0:
+                            wall_count += 1
+
+                # Only look at free cells
+                if cell_value != 0 or empty_count < 10 or wall_count > 3 or not self.is_reachable([x,y]):
+                    continue
+
                 # Note the position as desireable
                 target_positions.append(position)
 
         # Get closest non-visited position
-        closest_distance = None
+        closest_distance_sq = None
         closest_position = None
         for target_position in target_positions:
-            # Check if this position is the closest out of all possible positions
-            distance = self.distance(target_position, self.our_position)
-            if closest_distance is None or distance < closest_distance:
-                closest_distance = distance
+            dx = target_position[0] - self.our_position[0]
+            dy = target_position[1] - self.our_position[1]
+            distance_sq = dx*dx + dy*dy
+            if closest_distance_sq is None or distance_sq < closest_distance_sq:
+                closest_distance_sq = distance_sq
                 closest_position = target_position
 
         if closest_position is None:
