@@ -27,12 +27,12 @@ class FrontierManager(LifecycleNode):
         # ---------------------------
         self.min_frontier_area = 5.0      # Mindestgröße in Zellen (Rauschfilter)
         self.tracking_distance = 1.5      # Max. Distanz in Metern, um ein Frontier wiederzuerkennen
-        
+
         # ---------------------------
         # STATE / DATENBANK
         # ---------------------------
         self.latest_map = None
-        
+
         # Format: { 'id_string': { ...frontier_data... } }
         self.active_frontiers = {}
 
@@ -63,7 +63,7 @@ class FrontierManager(LifecycleNode):
             '/frontiers_data',
             10
         )
-        
+
         # Marker für RViz Visualisierung
         self.marker_pub = self.create_lifecycle_publisher(
             MarkerArray,
@@ -112,7 +112,7 @@ class FrontierManager(LifecycleNode):
         resolution = self.latest_map.info.resolution
         origin_x = self.latest_map.info.origin.position.x
         origin_y = self.latest_map.info.origin.position.y
-        
+
         data = data.reshape((height, width))
 
         # 2. Regionen definieren
@@ -131,7 +131,7 @@ class FrontierManager(LifecycleNode):
 
         for contour in contours:
             area = cv2.contourArea(contour)
-            
+
             # Filter: Zu kleine Fragmente (Sensorrauschen) ignorieren
             if area < self.min_frontier_area:
                 continue
@@ -140,7 +140,7 @@ class FrontierManager(LifecycleNode):
             M = cv2.moments(contour)
             if M["m00"] == 0:
                 continue
-                
+
             cx_map = int(M["m10"] / M["m00"])
             cy_map = int(M["m01"] / M["m00"])
 
@@ -168,7 +168,7 @@ class FrontierManager(LifecycleNode):
         Verhindert, dass IDs bei jeder Map-Aktualisierung gelöscht und neu erstellt werden.
         """
         new_database = {}
-        
+
         for curr_f in current_frontiers:
             best_match_id = None
             min_dist = float('inf')
@@ -223,7 +223,7 @@ class FrontierManager(LifecycleNode):
     def publish_markers(self):
         """ Erzeugt RViz Marker zur visuellen Kontrolle """
         marker_array = MarkerArray()
-        
+
         for idx, (fid, f) in enumerate(self.active_frontiers.items()):
             marker = Marker()
             marker.header.frame_id = self.latest_map.header.frame_id
@@ -232,26 +232,26 @@ class FrontierManager(LifecycleNode):
             marker.id = idx
             marker.type = Marker.SPHERE
             marker.action = Marker.ADD
-            
+
             # Position (World Coordinates)
             marker.pose.position.x = float(f['center_world'][0])
             marker.pose.position.y = float(f['center_world'][1])
             marker.pose.position.z = 0.0
-            
+
             # Größe abhängig von der Frontier-Area
             scale = min(1.0, max(0.2, math.sqrt(f['area']) * 0.05))
             marker.scale.x = scale
             marker.scale.y = scale
             marker.scale.z = scale
-            
+
             # Farbe (Cyan für aktive Frontiers)
             marker.color.r = 0.0
             marker.color.g = 1.0
             marker.color.b = 1.0
             marker.color.a = 0.8
-            
+
             marker_array.markers.append(marker)
-            
+
             # Text Marker für die ID
             text_marker = Marker()
             text_marker.header.frame_id = self.latest_map.header.frame_id
@@ -268,7 +268,7 @@ class FrontierManager(LifecycleNode):
             text_marker.color.b = 1.0
             text_marker.color.a = 1.0
             text_marker.text = f"F_{f['id']}"
-            
+
             marker_array.markers.append(text_marker)
 
         # Marker publizieren
