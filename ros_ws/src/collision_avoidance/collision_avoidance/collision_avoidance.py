@@ -118,6 +118,9 @@ class CollisionAvoidance(Node):
                 self.adjusted_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
 
         # If movement has been non-existent for too long, call for unstuck
+        if not self.unstuck_enabled:
+            return
+
         if (abs(self.adjusted_vector[0]) + abs(self.adjusted_vector[1])) < 0.01:
             self.stuck_counter = self.stuck_counter + 1
         else:
