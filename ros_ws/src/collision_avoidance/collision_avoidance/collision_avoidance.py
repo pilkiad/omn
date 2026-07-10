@@ -14,6 +14,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from collision_interfaces.msg import TargetVector
+from std_msgs.msg import Bool
 
 import math
 import random
@@ -28,6 +29,7 @@ class CollisionAvoidance(Node):
         # NOTE: Block all driving until we have received sensor data, so we know potential collisions may be avoided
         self.lidar_received = False
         self.target_vector_received = False
+        self.unstuck_enabled = False
 
         # Behavioural constants
         self.MAX_SENSOR_RANGE = 0.6                 # Maximum obstacle distance that robot will alter curse
@@ -42,9 +44,14 @@ class CollisionAvoidance(Node):
 
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
-        self.scan_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector_callback, 1)
+        self.target_vector_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector_callback, 1)
+        self.toggle_unstuck_subscription = self.create_subscription(Bool, "/toggle_unstuck", self.toggle_unstuck_callback, 1)
         self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
+
+    def toggle_unstuck_callback(self, msg):
+        self.unstuck_enabled = msg.data
+        #self.get_logger().warn(f"Unstuck was set to {self.unstuck_enabled}")
 
     def get_point(self, origin: list[int], a: float, d: float) -> list[int]:
         """
@@ -60,7 +67,7 @@ class CollisionAvoidance(Node):
         self.target_vector_received = True
         self.target_vector_age = 0
         self.target_vector = [ msg.linear, msg.angular ]
-        self.get_logger().info(f"Received new target vector")
+        #self.get_logger().info(f"Received new target vector")
 
     def scan_callback(self, msg):
         self.lidar_received = True
@@ -111,6 +118,9 @@ class CollisionAvoidance(Node):
                 self.adjusted_vector[1] += correction_point[1] * self.DAMPING_MULTIPLIER[1]
 
         # If movement has been non-existent for too long, call for unstuck
+        if not self.unstuck_enabled:
+            return
+
         if (abs(self.adjusted_vector[0]) + abs(self.adjusted_vector[1])) < 0.01:
             self.stuck_counter = self.stuck_counter + 1
         else:
@@ -130,10 +140,10 @@ class CollisionAvoidance(Node):
 
         # Check if we are able to move
         if not self.lidar_received:
-            self.get_logger().info(f"Can't drive, no sensor info received")
+            self.get_logger().warn(f"Can't drive, no sensor info received")
             return
         if not self.target_vector_received:
-            self.get_logger().info(f"Can't drive, no target vector received")
+            self.get_logger().warn(f"Can't drive, no target vector received")
             return
 
         # Clamp movement vector
