@@ -35,7 +35,7 @@ class Exploration(Node):
         self.publisher = self.create_publisher(PoseStamped, "/goal_pose", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.cmd_vel_subscription = self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_callback, 1)
-        self.exploration_time = self.create_timer(10, self.exploration_callback)
+        self.exploration_time = self.create_timer(60, self.exploration_callback)
         self.marker_pub = self.create_publisher(MarkerArray, '/exploration_markers', 1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
