@@ -45,6 +45,9 @@ class Exploration(Node):
         self.target_vector = [ msg.linear.x, msg.angular.z ]
 
     def get_cell_at(self, x, y):
+        index = (y * self.map_width) + x
+        if index < 0 or index > len(self.env_map):
+            return -1
         return self.env_map[(y * self.map_width) + x]
 
     def distance(self, from_pos, to_pos):

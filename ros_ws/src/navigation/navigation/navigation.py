@@ -324,8 +324,34 @@ class Navigation(Node):
         self.last_pose_time = self.now_seconds()
 
     def goal_pose_callback(self, msg):
-        self.goal_x = msg.pose.position.x
-        self.goal_y = msg.pose.position.y
+        goal_x = msg.pose.position.x
+        goal_y = msg.pose.position.y
+
+        source_frame = msg.header.frame_id
+        if source_frame and source_frame != self.tf_map_frame:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.tf_map_frame,
+                    source_frame,
+                    rclpy.time.Time(),
+                )
+                t = transform.transform.translation
+                q = transform.transform.rotation
+                cos_a = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                sin_a = 2.0 * (q.w * q.z + q.x * q.y)
+                new_x = cos_a * goal_x - sin_a * goal_y + t.x
+                new_y = sin_a * goal_x + cos_a * goal_y + t.y
+                goal_x = new_x
+                goal_y = new_y
+            except Exception as e:
+                self.get_logger().warning(
+                    f'Failed to transform goal from {source_frame} '
+                    f'to {self.tf_map_frame}: {e}'
+                )
+                return
+
+        self.goal_x = goal_x
+        self.goal_y = goal_y
         self.has_goal = True
         self.last_goal_time = self.now_seconds()
         self.clear_planned_path(reset_planning_context=True)

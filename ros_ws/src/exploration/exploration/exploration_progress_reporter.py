@@ -15,6 +15,8 @@ class Exploration(Node):
     def __init__(self):
         super().__init__("exploration_progress_reporter")
 
+        self.our_position = [ 0.0, 0.0 ]
+
         self.env_map = None
         self.map_width = 0.0
         self.map_height = 0.0
