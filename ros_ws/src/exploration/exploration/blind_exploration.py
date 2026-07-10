@@ -14,6 +14,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from collision_interfaces.msg import TargetVector
+from std_msgs.msg import Bool
 
 import math
 import random
@@ -44,7 +45,15 @@ class BlindExploration(Node):
         # Handle topics
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
         self.publisher = self.create_publisher(TargetVector, "/target_vector", 1)
+        self.unstuck_publisher = self.create_publisher(Bool, "/toggle_unstuck", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
+
+        self.toggle_unstuck(True)
+
+    def toggle_unstuck(self, state):
+        msg = Bool()
+        msg.data = state
+        self.unstuck_publisher.publish(msg)
 
     def scan_callback(self, msg):
         # Define movement vector with a bias for going forward
@@ -108,6 +117,7 @@ class BlindExploration(Node):
         msg.angular = self.target_vector[1]
 
         # Publish
+        self.toggle_unstuck(True)
         self.publisher.publish(msg)
         self.get_logger().info(f"target_vector={self.target_vector}, drift={self.drift}, c={self.drift_shuffle_c}")
 
@@ -122,6 +132,8 @@ def main():
         stop_msg = TargetVector()
         stop_msg.linear = 0.0
         stop_msg.angular = 0.0
+
+        blindExploration.toggle_unstuck(False)
         blindExploration.publisher.publish(stop_msg)
         blindExploration.destroy_node()
         rclpy.shutdown()
