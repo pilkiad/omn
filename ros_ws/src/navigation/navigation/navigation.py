@@ -17,6 +17,7 @@ class Navigation(Node):
     STATUS_HEARTBEAT_SEC = 2.0
     TF_MAP_FRAME = 'map'
     TF_ROBOT_FRAME = 'base_footprint'
+    TURN_IN_PLACE_THRESHOLD = math.pi / 3.0
 
     def __init__(self):
         super().__init__('navigation')
@@ -43,6 +44,7 @@ class Navigation(Node):
 
         self.path = []
         self.path_grid = []
+        self.path_progress = 0.0
         self.last_planned_start = None
         self.last_planned_goal = None
 
@@ -57,19 +59,13 @@ class Navigation(Node):
         self._last_planning_context = None
 
         self.OCCUPIED_THRESHOLD = 50
-        self.ROBOT_RADIUS = 0.33
-        self.ROBOT_SAFETY_MARGIN = 0.10
         # Clearance is measured from the robot center on the planning grid.
-        # self.ROBOT_CLEARANCE_RADIUS = self.ROBOT_RADIUS * (1.0 + self.ROBOT_SAFETY_MARGIN)
-        self.ROBOT_CLEARANCE_RADIUS = 0.7
-        self.MAX_INFLATION_COST = 4.0
+        self.ROBOT_CLEARANCE_RADIUS = 0.40
         self.GOAL_TOLERANCE = 0.10
-        self.WAYPOINT_TOLERANCE = 0.10
-        self.WAYPOINT_LOOKAHEAD = 2
+        self.LOOKAHEAD_DISTANCE = 0.40
         self.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
-        self.LINEAR_SPEED = 0.18
-        self.ANGULAR_GAIN = 1.6
-        self.MAX_ANGULAR_SPEED = 0.9
+        self.LINEAR_SPEED = 0.11
+        self.MAX_ANGULAR_SPEED = 0.45
 
         planned_path_qos = QoSProfile(
             depth=1,
@@ -425,6 +421,7 @@ class Navigation(Node):
 
             self.path_grid = planned_path_grid
             self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+            self.path_progress = 0.0
             self.last_planned_start = start
             self.last_planned_goal = goal
             self.publish_planned_path()
@@ -540,7 +537,7 @@ class Navigation(Node):
                     continue
 
             if self.is_traversable(neighbor) or (neighbor == goal and self.is_raw_free(neighbor)):
-                yield neighbor, cost + self.inflation_penalty(neighbor)
+                yield neighbor, cost + (2.0 if self.is_inflated(neighbor) else 0.0)
 
     def reconstruct_path(self, came_from, current):
         path = [current]
@@ -551,33 +548,114 @@ class Navigation(Node):
         return path
 
     def next_waypoint(self):
-        while len(self.path) > 1:
-            waypoint_x, waypoint_y = self.path[0]
-            if self.distance(self.x, self.y, waypoint_x, waypoint_y) > self.WAYPOINT_TOLERANCE:
-                break
-            self.path.pop(0)
-            self.path_grid.pop(0)
+        path_distance = 0.0
+        projected_progress = self.path_progress
+        projection_distance_squared = math.inf
 
-        index = min(self.WAYPOINT_LOOKAHEAD, len(self.path) - 1)
-        return self.path[index]
+        for segment_start, segment_end in zip(self.path, self.path[1:]):
+            start_x, start_y = segment_start
+            end_x, end_y = segment_end
+            segment_x = end_x - start_x
+            segment_y = end_y - start_y
+            segment_length_squared = (
+                segment_x * segment_x + segment_y * segment_y
+            )
+            if segment_length_squared == 0.0:
+                continue
+
+            segment_length = math.sqrt(segment_length_squared)
+            segment_end_progress = path_distance + segment_length
+            if segment_end_progress < self.path_progress:
+                path_distance = segment_end_progress
+                continue
+
+            minimum_t = self.clamp(
+                (self.path_progress - path_distance) / segment_length,
+                0.0,
+                1.0,
+            )
+            projection_t = self.clamp(
+                (
+                    (self.x - start_x) * segment_x
+                    + (self.y - start_y) * segment_y
+                ) / segment_length_squared,
+                minimum_t,
+                1.0,
+            )
+            projection_x = start_x + projection_t * segment_x
+            projection_y = start_y + projection_t * segment_y
+            distance_squared = (
+                (self.x - projection_x) * (self.x - projection_x)
+                + (self.y - projection_y) * (self.y - projection_y)
+            )
+            if distance_squared < projection_distance_squared:
+                projection_distance_squared = distance_squared
+                projected_progress = (
+                    path_distance + projection_t * segment_length
+                )
+
+            path_distance = segment_end_progress
+
+        self.path_progress = projected_progress
+        lookahead_progress = min(
+            self.path_progress + self.LOOKAHEAD_DISTANCE,
+            path_distance,
+        )
+
+        path_distance = 0.0
+        for segment_start, segment_end in zip(self.path, self.path[1:]):
+            start_x, start_y = segment_start
+            end_x, end_y = segment_end
+            segment_x = end_x - start_x
+            segment_y = end_y - start_y
+            segment_length = math.hypot(segment_x, segment_y)
+            if segment_length == 0.0:
+                continue
+
+            segment_end_progress = path_distance + segment_length
+            if lookahead_progress <= segment_end_progress:
+                target_t = (
+                    lookahead_progress - path_distance
+                ) / segment_length
+                return (
+                    start_x + target_t * segment_x,
+                    start_y + target_t * segment_y,
+                )
+            path_distance = segment_end_progress
+
+        return self.path[-1]
 
     def target_vector_to_waypoint(self, waypoint):
         waypoint_x, waypoint_y = waypoint
         dx = waypoint_x - self.x
         dy = waypoint_y - self.y
-        distance_to_waypoint = math.hypot(dx, dy)
+        cos_yaw = math.cos(self.yaw)
+        sin_yaw = math.sin(self.yaw)
+        robot_x = cos_yaw * dx + sin_yaw * dy
+        robot_y = -sin_yaw * dx + cos_yaw * dy
+        distance_squared = robot_x * robot_x + robot_y * robot_y
+        distance_to_waypoint = math.sqrt(distance_squared)
+        heading_error = math.atan2(robot_y, robot_x)
 
-        desired_yaw = math.atan2(dy, dx)
-        yaw_error = self.normalize_angle(desired_yaw - self.yaw)
+        if abs(heading_error) >= self.TURN_IN_PLACE_THRESHOLD:
+            angular = self.clamp(
+                heading_error,
+                -self.MAX_ANGULAR_SPEED,
+                self.MAX_ANGULAR_SPEED,
+            )
+            return 0.0, angular
 
-        angular = self.clamp(
-            yaw_error * self.ANGULAR_GAIN,
-            -self.MAX_ANGULAR_SPEED,
-            self.MAX_ANGULAR_SPEED
-        )
-
-        turn_scale = max(0.0, 1.0 - abs(yaw_error) / (math.pi / 2.0))
+        turn_scale = max(0.0, 1.0 - abs(heading_error) / (math.pi / 2.0))
         linear = min(self.LINEAR_SPEED, distance_to_waypoint) * turn_scale
+
+        curvature = 0.0
+        if distance_squared > 0.0:
+            curvature = 2.0 * robot_y / distance_squared
+        angular = self.clamp(
+            linear * curvature,
+            -self.MAX_ANGULAR_SPEED,
+            self.MAX_ANGULAR_SPEED,
+        )
 
         return linear, angular
 
@@ -605,19 +683,6 @@ class Navigation(Node):
 
     def is_traversable(self, cell):
         return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
-
-    def inflation_penalty(self, cell):
-        if self.ROBOT_CLEARANCE_RADIUS <= 0.0:
-            return 0.0
-
-        obstacle_distance = self.obstacle_distance(cell)
-        if obstacle_distance >= self.ROBOT_CLEARANCE_RADIUS:
-            return 0.0
-
-        closeness = (
-            self.ROBOT_CLEARANCE_RADIUS - obstacle_distance
-        ) / self.ROBOT_CLEARANCE_RADIUS
-        return self.MAX_INFLATION_COST * closeness * closeness
 
     def is_inflated(self, cell):
         return self.obstacle_distance(cell) < self.ROBOT_CLEARANCE_RADIUS
@@ -721,13 +786,6 @@ class Navigation(Node):
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         return math.atan2(siny_cosp, cosy_cosp)
-
-    def normalize_angle(self, angle):
-        while angle > math.pi:
-            angle -= 2.0 * math.pi
-        while angle < -math.pi:
-            angle += 2.0 * math.pi
-        return angle
 
     def distance(self, x1, y1, x2, y2):
         return math.hypot(x2 - x1, y2 - y1)

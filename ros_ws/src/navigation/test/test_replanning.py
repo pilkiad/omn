@@ -1,6 +1,7 @@
 """Tests for navigation path replanning decisions."""
 
 import importlib
+import math
 import sys
 import types
 
@@ -181,16 +182,15 @@ def _make_navigation(path_grid, goal=None):
     nav.obstacle_distance_map = []
 
     nav.GOAL_TOLERANCE = 0.01
-    nav.WAYPOINT_TOLERANCE = 0.2
-    nav.WAYPOINT_LOOKAHEAD = 1
+    nav.LOOKAHEAD_DISTANCE = 0.40
     nav.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
-    nav.LINEAR_SPEED = 0.18
-    nav.ANGULAR_GAIN = 1.6
-    nav.MAX_ANGULAR_SPEED = 0.9
+    nav.LINEAR_SPEED = 0.09
+    nav.MAX_ANGULAR_SPEED = 0.45
 
     nav.goal_x, nav.goal_y = nav.grid_to_world(goal)
     nav.path_grid = list(path_grid)
     nav.path = [nav.grid_to_world(cell) for cell in nav.path_grid]
+    nav.path_progress = 0.0
     nav.last_planned_start = path_grid[0] if path_grid else None
     nav.last_planned_goal = goal
 
@@ -274,6 +274,105 @@ def test_timer_does_not_replan_while_advancing_along_valid_path():
 
     assert calls == []
     assert len(nav.publisher.messages) == 3
+
+
+def test_neighbors_use_flat_cost_inside_safety_radius():
+    nav = _make_navigation([(0, 0), (1, 0)])
+    nav.ROBOT_CLEARANCE_RADIUS = 0.37
+    obstacle_distances = {
+        (0, 1): 0.10,
+        (2, 1): 0.36,
+        (1, 0): 0.37,
+    }
+    nav.obstacle_distance = lambda cell: obstacle_distances.get(cell, math.inf)
+
+    neighbors = dict(nav.neighbors((1, 1), (9, 9)))
+
+    assert neighbors[(0, 1)] == 3.0
+    assert neighbors[(2, 1)] == 3.0
+    assert neighbors[(1, 0)] == 1.0
+
+
+def test_lookahead_is_interpolated_at_metric_distance():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    nav.path = [
+        (0.0, 0.0),
+        (0.05, 0.0),
+        (0.05, 0.05),
+        (0.10, 0.05),
+        (0.10, 0.10),
+        (0.15, 0.10),
+        (0.15, 0.15),
+        (0.20, 0.15),
+        (0.20, 0.20),
+        (0.25, 0.20),
+    ]
+    nav.x = 0.025
+    nav.y = 0.01
+
+    waypoint = nav.next_waypoint()
+
+    assert abs(waypoint[0] - 0.225) < 1e-9
+    assert abs(waypoint[1] - 0.20) < 1e-9
+
+
+def test_path_progress_does_not_move_backwards():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    nav.path = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
+    nav.x = 0.25
+    nav.y = 0.3
+
+    first_waypoint = nav.next_waypoint()
+    nav.x = 0.1
+    second_waypoint = nav.next_waypoint()
+
+    assert abs(nav.path_progress - 0.25) < 1e-9
+    assert first_waypoint == second_waypoint
+
+
+def test_successful_replan_resets_path_progress():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    nav.path_progress = 1.0
+    nav.goal_x, nav.goal_y = nav.grid_to_world((3, 0))
+    nav.a_star = lambda start, goal: [
+        (0, 0),
+        (1, 0),
+        (2, 0),
+        (3, 0),
+    ]
+
+    nav.timer_callback()
+
+    assert nav.path_progress == 0.0
+
+
+def test_target_vector_uses_robot_frame_pure_pursuit_curvature():
+    nav = _make_navigation([(0, 0), (1, 0)])
+    nav.x = 0.0
+    nav.y = 0.0
+    nav.yaw = math.pi / 2.0
+    waypoint = (-0.2, 1.0)
+
+    linear, angular = nav.target_vector_to_waypoint(waypoint)
+
+    robot_x = 1.0
+    robot_y = 0.2
+    curvature = 2.0 * robot_y / (
+        robot_x * robot_x + robot_y * robot_y
+    )
+    assert abs(angular - linear * curvature) < 1e-9
+
+
+def test_target_vector_turns_in_place_when_waypoint_is_to_the_side():
+    nav = _make_navigation([(0, 0), (1, 0)])
+    nav.x = 0.0
+    nav.y = 0.0
+    nav.yaw = 0.0
+
+    linear, angular = nav.target_vector_to_waypoint((0.0, -1.0))
+
+    assert linear == 0.0
+    assert angular == -nav.MAX_ANGULAR_SPEED
 
 
 def test_failed_replan_stops_and_clears_invalid_path():
