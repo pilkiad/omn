@@ -1,10 +1,13 @@
+from collections import deque
 import heapq
+import json
 import math
 
 from collision_interfaces.msg import TargetVector
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Path
+from std_msgs.msg import String
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy
@@ -34,6 +37,14 @@ class Navigation(Node):
         self.goal_x = 0.0
         self.goal_y = 0.0
         self.has_goal = False
+
+        # FIFO queue for incoming tracking waypoints.
+        # The current goal stays active; newer goals wait here.
+        self.goal_queue = deque()
+        self.last_received_goal = None
+        self.MIN_GOAL_SPACING = 0.25
+        self.MAX_GOAL_QUEUE_SIZE = 100
+        self.navigation_state = 'IDLE'
 
         self.path = []
         self.path_grid = []
@@ -88,6 +99,18 @@ class Navigation(Node):
         )
 
         self.publisher = self.create_publisher(TargetVector, '/target_vector', 1)
+
+        status_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.status_publisher = self.create_publisher(
+            String,
+            '/navigation_status',
+            status_qos,
+        )
+
         self.timer = self.create_timer(0.2, self.timer_callback)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -139,13 +162,116 @@ class Navigation(Node):
         self.has_pose = True
 
     def goal_pose_callback(self, msg):
-        self.goal_x = msg.pose.position.x
-        self.goal_y = msg.pose.position.y
-        self.has_goal = True
-        self.get_logger().info(
-            f'Received goal pose x={self.goal_x:.3f}, y={self.goal_y:.3f}'
+        new_goal = (
+            msg.pose.position.x,
+            msg.pose.position.y,
         )
+
+        # Ignore repeated or almost identical detections.
+        if self.last_received_goal is not None:
+            spacing = self.distance(
+                new_goal[0],
+                new_goal[1],
+                self.last_received_goal[0],
+                self.last_received_goal[1],
+            )
+            if spacing < self.MIN_GOAL_SPACING:
+                return
+
+        # Prevent unbounded queue growth.
+        if len(self.goal_queue) >= self.MAX_GOAL_QUEUE_SIZE:
+            self.get_logger().warning(
+                'Goal queue is full. New waypoint rejected.'
+            )
+            self.publish_navigation_status(
+                'QUEUE_FULL',
+                'New waypoint rejected because the queue is full',
+            )
+            return
+
+        self.last_received_goal = new_goal
+
+        if not self.has_goal:
+            self.activate_goal(new_goal)
+            return
+
+        self.goal_queue.append(new_goal)
+        self.get_logger().info(
+            f'Queued goal x={new_goal[0]:.3f}, '
+            f'y={new_goal[1]:.3f}; '
+            f'queue size={len(self.goal_queue)}'
+        )
+        self.publish_navigation_status(
+            'WAYPOINT_QUEUED',
+            'Waypoint added to the navigation queue',
+        )
+
+    def activate_goal(self, goal):
+        self.goal_x = goal[0]
+        self.goal_y = goal[1]
+        self.has_goal = True
         self.clear_planned_path()
+
+        self.get_logger().info(
+            f'Activated goal x={self.goal_x:.3f}, '
+            f'y={self.goal_y:.3f}; '
+            f'queued={len(self.goal_queue)}'
+        )
+        self.publish_navigation_status(
+            'WAYPOINT_QUEUED',
+            'Goal activated; waiting for a valid path',
+        )
+
+    def activate_next_goal(self):
+        if self.goal_queue:
+            next_goal = self.goal_queue.popleft()
+            self.activate_goal(next_goal)
+            return True
+
+        self.has_goal = False
+        self.clear_planned_path()
+        self.publish_navigation_status(
+            'IDLE',
+            'All queued waypoints completed',
+        )
+        return False
+
+    def publish_navigation_status(self, state, description=''):
+        """Publish navigation state for the rest of the system."""
+        previous_state = self.navigation_state
+        self.navigation_state = state
+
+        status = String()
+        status.data = json.dumps({
+            'state': state,
+            'description': description,
+            'has_active_goal': self.has_goal,
+            'active_goal': {
+                'x': self.goal_x,
+                'y': self.goal_y,
+            } if self.has_goal else None,
+            'queued_goals': len(self.goal_queue),
+            'robot_pose': {
+                'x': self.x,
+                'y': self.y,
+            } if self.has_pose else None,
+        })
+        self.status_publisher.publish(status)
+        
+        if state != previous_state:
+            active_goal_text = (
+                f'({self.goal_x:.2f}, {self.goal_y:.2f})'
+                if self.has_goal
+                else 'none'
+        )   
+
+            self.get_logger().info(
+                f'NAVIGATION STATUS | '
+                f'state={state} | '
+                f'goal={active_goal_text} | '
+                f'queued={len(self.goal_queue)} | '
+                f'{description}'
+        )
 
     def publish_planned_path(self):
         msg = Path()
@@ -179,10 +305,28 @@ class Navigation(Node):
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
-            self.clear_planned_path()
-            self.has_goal = False
+            reached_x = self.goal_x
+            reached_y = self.goal_y
+
+            # Publish a zero target vector before switching goals.
             self.publisher.publish(msg)
-            self.get_logger().info('Goal succeeded')
+            self.clear_planned_path()
+
+            self.get_logger().info(
+                f'Waypoint reached x={reached_x:.3f}, '
+                f'y={reached_y:.3f}'
+            )
+            self.publish_navigation_status(
+                'WAYPOINT_REACHED',
+                f'Reached waypoint ({reached_x:.3f}, {reached_y:.3f})',
+            )
+
+            if not self.activate_next_goal():
+                self.get_logger().info('All queued goals succeeded')
+                self.publish_navigation_status(
+                    'GOAL_REACHED',
+                    'Complete waypoint queue executed',
+                )
             return
 
         start = self.world_to_grid(self.x, self.y)
@@ -191,7 +335,11 @@ class Navigation(Node):
         if start is None or goal is None:
             self.clear_planned_path()
             self.publisher.publish(msg)
-            self.get_logger().warn('Robot or goal is outside the map')
+            self.get_logger().warning('Robot or goal is outside the map')
+            self.publish_navigation_status(
+                'OUTSIDE_MAP',
+                'Robot or active goal is outside the map',
+            )
             return
 
         replan_reason = self.replan_reason(start, goal)
@@ -206,13 +354,17 @@ class Navigation(Node):
             if not planned_path_grid:
                 self.clear_planned_path()
                 self.publisher.publish(msg)
-                self.get_logger().warn(
+                self.get_logger().warning(
                     'No path to goal found; '
                     f'reason={replan_reason} '
                     f'start={start} raw_free={self.is_raw_free(start)} '
                     f'traversable={self.is_traversable(start)} '
                     f'goal={goal} raw_free={self.is_raw_free(goal)} '
                     f'traversable={self.is_traversable(goal)}'
+                )
+                self.publish_navigation_status(
+                    'NO_PATH_FOUND',
+                    'No valid path to the active waypoint',
                 )
                 return
 
@@ -224,12 +376,16 @@ class Navigation(Node):
 
         if not self.path:
             self.publisher.publish(msg)
-            self.get_logger().warn(
+            self.get_logger().warning(
                 'No path to goal found; '
                 f'start={start} raw_free={self.is_raw_free(start)} '
                 f'traversable={self.is_traversable(start)} '
                 f'goal={goal} raw_free={self.is_raw_free(goal)} '
                 f'traversable={self.is_traversable(goal)}'
+            )
+            self.publish_navigation_status(
+                'NO_PATH_FOUND',
+                'No valid path to the active waypoint',
             )
             return
 
@@ -238,6 +394,10 @@ class Navigation(Node):
         msg.linear = linear
         msg.angular = angular
         self.publisher.publish(msg)
+        self.publish_navigation_status(
+            'MOVING',
+            'Following path to active waypoint',
+        )
 
     def ready_to_plan(self):
         return self.has_map and self.has_pose and self.has_goal
