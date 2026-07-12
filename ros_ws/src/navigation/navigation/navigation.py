@@ -13,10 +13,15 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
-from tf2_ros import TransformListener, Buffer
+from tf2_ros import Buffer, TransformListener
 
 
 class Navigation(Node):
+    STATUS_HEARTBEAT_SEC = 2.0
+    TF_MAP_FRAME = 'map'
+    TF_ROBOT_FRAME = 'base_footprint'
+    TURN_IN_PLACE_THRESHOLD = math.pi / 3.0
+
     def __init__(self):
         super().__init__('navigation')
 
@@ -24,6 +29,7 @@ class Navigation(Node):
         self.y = 0.0
         self.yaw = 0.0
         self.has_pose = False
+        self.last_pose_time = None
 
         self.env_map = []
         self.obstacle_distance_map = []
@@ -37,34 +43,38 @@ class Navigation(Node):
         self.goal_x = 0.0
         self.goal_y = 0.0
         self.has_goal = False
+        self.last_goal_time = None
 
-        # FIFO queue for incoming tracking waypoints.
-        # The current goal stays active; newer goals wait here.
+        # FIFO queue for tracking waypoints.
         self.goal_queue = deque()
         self.last_received_goal = None
         self.MIN_GOAL_SPACING = 0.25
         self.MAX_GOAL_QUEUE_SIZE = 100
-        self.navigation_state = 'IDLE'
 
         self.path = []
         self.path_grid = []
+        self.path_progress = 0.0
         self.last_planned_start = None
         self.last_planned_goal = None
 
+        self.state = 'idle'
+        self.blocking_reason = 'none'
+        self.tf_ok = False
+        self.tf_map_frame = self.TF_MAP_FRAME
+        self.tf_robot_frame = self.TF_ROBOT_FRAME
+        self.tf_error = 'not_checked'
+        self._last_status_signature = None
+        self._last_status_log_time = None
+        self._last_planning_context = None
+
         self.OCCUPIED_THRESHOLD = 50
-        self.ROBOT_RADIUS = 0.33
-        self.ROBOT_SAFETY_MARGIN = 0.10
         # Clearance is measured from the robot center on the planning grid.
-        # self.ROBOT_CLEARANCE_RADIUS = self.ROBOT_RADIUS * (1.0 + self.ROBOT_SAFETY_MARGIN)
-        self.ROBOT_CLEARANCE_RADIUS = 0.7
-        self.MAX_INFLATION_COST = 4.0
+        self.ROBOT_CLEARANCE_RADIUS = 0.40
         self.GOAL_TOLERANCE = 0.10
-        self.WAYPOINT_TOLERANCE = 0.10
-        self.WAYPOINT_LOOKAHEAD = 2
+        self.LOOKAHEAD_DISTANCE = 0.40
         self.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
-        self.LINEAR_SPEED = 0.18
-        self.ANGULAR_GAIN = 1.6
-        self.MAX_ANGULAR_SPEED = 0.9
+        self.LINEAR_SPEED = 0.11
+        self.MAX_ANGULAR_SPEED = 0.45
 
         planned_path_qos = QoSProfile(
             depth=1,
@@ -115,17 +125,190 @@ class Navigation(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_timer = self.create_timer(0.1, self.get_tf)
+        self.log_status(force=True)
 
     def get_tf(self):
         try:
-            t = self.tf_buffer.lookup_transform("map", "base_footprint", rclpy.time.Time())
-            self.x = t.transform.translation.x
-            self.y = t.transform.translation.y
-            self.yaw = self.yaw_from_quaternion(t.transform.rotation)
+            transform = self.tf_buffer.lookup_transform(
+                self.tf_map_frame,
+                self.tf_robot_frame,
+                rclpy.time.Time(),
+            )
+            self.tf_ok = True
+            self.tf_error = 'none'
+            self.x = transform.transform.translation.x
+            self.y = transform.transform.translation.y
+            self.yaw = self.yaw_from_quaternion(
+                transform.transform.rotation
+            )
             self.has_pose = True
-            self.get_logger().info(f"Got new position")
-        except Exception as e:
-            self.get_logger().info(f"No transform: " + str(e))
+            self.last_pose_time = self.now_seconds()
+        except Exception as error:
+            new_failure = self.tf_ok or self.tf_error == 'not_checked'
+            self.tf_ok = False
+            self.tf_error = self.sanitize_error(error)
+            if new_failure:
+                self.log_status(force=True, warning=True)
+
+    def sanitize_error(self, error):
+        return ' '.join(str(error).split()) or error.__class__.__name__
+
+    def now_seconds(self):
+        return self.get_clock().now().nanoseconds / 1_000_000_000.0
+
+    def age_seconds(self, timestamp, now):
+        if timestamp is None:
+            return None
+        return max(0.0, now - timestamp)
+
+    def status_snapshot(self, now):
+        start_cell = None
+        goal_cell = None
+
+        if self.has_map and self.has_pose:
+            start_cell = self.world_to_grid(self.x, self.y)
+        if self.has_map and self.has_goal:
+            goal_cell = self.world_to_grid(self.goal_x, self.goal_y)
+
+        return {
+            'state': self.state,
+            'blocking_reason': self.blocking_reason,
+            'has_map': self.has_map,
+            'has_pose': self.has_pose,
+            'has_goal': self.has_goal,
+            'queued_goals': len(self.goal_queue),
+            'ready_to_plan': self.ready_to_plan(),
+            'start_cell': start_cell,
+            'pose_age_sec': self.age_seconds(self.last_pose_time, now),
+            'goal_cell': goal_cell,
+            'goal_age_sec': self.age_seconds(self.last_goal_time, now),
+            'tf_ok': self.tf_ok,
+            'tf_map_frame': self.tf_map_frame,
+            'tf_robot_frame': self.tf_robot_frame,
+            'tf_error': self.tf_error,
+        }
+
+    def status_signature(self, status):
+        return tuple(
+            status[key]
+            for key in (
+                'state',
+                'blocking_reason',
+                'has_map',
+                'has_pose',
+                'has_goal',
+                'queued_goals',
+                'ready_to_plan',
+                'start_cell',
+                'goal_cell',
+                'tf_ok',
+                'tf_map_frame',
+                'tf_robot_frame',
+            )
+        )
+
+    def format_status_value(self, value):
+        if value is None:
+            return 'n/a'
+        if isinstance(value, bool):
+            return str(value).lower()
+        if isinstance(value, tuple):
+            return f'({value[0]},{value[1]})'
+        if isinstance(value, float):
+            return f'{value:.2f}'
+
+        text = str(value)
+        if any(character.isspace() for character in text):
+            escaped = text.replace('\\', '\\\\').replace('"', '\\"')
+            return f'"{escaped}"'
+        return text
+
+    def format_status(self, status):
+        fields = (
+            'state',
+            'blocking_reason',
+            'has_map',
+            'has_pose',
+            'has_goal',
+            'queued_goals',
+            'ready_to_plan',
+            'start_cell',
+            'pose_age_sec',
+            'goal_cell',
+            'goal_age_sec',
+            'tf_ok',
+            'tf_map_frame',
+            'tf_robot_frame',
+            'tf_error',
+        )
+        return ' '.join(
+            f'{field}={self.format_status_value(status[field])}'
+            for field in fields
+        )
+
+    def log_status(self, force=False, warning=False):
+        now = self.now_seconds()
+        status = self.status_snapshot(now)
+        signature = self.status_signature(status)
+        heartbeat_due = (
+            self._last_status_log_time is None
+            or now - self._last_status_log_time >= self.STATUS_HEARTBEAT_SEC
+        )
+
+        if not force and signature == self._last_status_signature:
+            if not heartbeat_due:
+                return
+
+        message = self.format_status(status)
+        if warning or self.state in ('no_path', 'outside_map'):
+            self.get_logger().warning(message)
+        else:
+            self.get_logger().info(message)
+
+        self._last_status_signature = signature
+        self._last_status_log_time = now
+
+    def set_status(self, state, blocking_reason='none'):
+        self.state = state
+        self.blocking_reason = blocking_reason
+        if state != 'no_path':
+            self._last_planning_context = None
+        self.log_status()
+        self.publish_navigation_status(state, blocking_reason)
+
+    def set_planning_status(self, replan_reason, start, goal):
+        self.state = 'planning'
+        self.blocking_reason = 'none'
+        context = (replan_reason, start, goal)
+        if context == self._last_planning_context:
+            return
+
+        self._last_planning_context = context
+        self.log_status(force=True)
+        self.publish_navigation_status('planning', replan_reason)
+
+    def readiness_status(self):
+        if not self.has_map:
+            return 'waiting_for_map', 'map_missing'
+        if not self.has_pose:
+            return 'waiting_for_pose', 'pose_missing'
+        if not self.has_goal:
+            return 'waiting_for_goal', 'goal_missing'
+        return None
+
+    def outside_map_reason(self, start, goal):
+        if start is None and goal is None:
+            return 'both_outside'
+        if start is None:
+            return 'start_outside'
+        return 'goal_outside'
+
+    def no_path_reason(self, start, goal):
+        if not self.is_raw_free(start):
+            return 'start_blocked'
+        if not self.is_raw_free(goal):
+            return 'goal_blocked'
+        return 'astar_exhausted'
 
     def map_callback(self, msg):
         env_map = list(msg.data)
@@ -150,7 +333,7 @@ class Navigation(Node):
         self.env_map = env_map
         self.obstacle_distance_map = self.build_obstacle_distance_map()
         self.has_map = True
-        self.clear_planned_path()
+        self.clear_planned_path(reset_planning_context=True)
 
     def pos_callback(self, msg):
         self.update_pose(msg.pose)
@@ -160,14 +343,37 @@ class Navigation(Node):
         self.y = pose.position.y
         self.yaw = self.yaw_from_quaternion(pose.orientation)
         self.has_pose = True
+        self.last_pose_time = self.now_seconds()
 
     def goal_pose_callback(self, msg):
-        new_goal = (
-            msg.pose.position.x,
-            msg.pose.position.y,
-        )
+        goal_x = msg.pose.position.x
+        goal_y = msg.pose.position.y
 
-        # Ignore repeated or almost identical detections.
+        source_frame = msg.header.frame_id
+        if source_frame and source_frame != self.tf_map_frame:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.tf_map_frame,
+                    source_frame,
+                    rclpy.time.Time(),
+                )
+                t = transform.transform.translation
+                q = transform.transform.rotation
+                cos_a = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                sin_a = 2.0 * (q.w * q.z + q.x * q.y)
+                new_x = cos_a * goal_x - sin_a * goal_y + t.x
+                new_y = sin_a * goal_x + cos_a * goal_y + t.y
+                goal_x = new_x
+                goal_y = new_y
+            except Exception as error:
+                self.get_logger().warning(
+                    f'Failed to transform goal from {source_frame} '
+                    f'to {self.tf_map_frame}: {error}'
+                )
+                return
+
+        new_goal = (goal_x, goal_y)
+
         if self.last_received_goal is not None:
             spacing = self.distance(
                 new_goal[0],
@@ -178,14 +384,13 @@ class Navigation(Node):
             if spacing < self.MIN_GOAL_SPACING:
                 return
 
-        # Prevent unbounded queue growth.
         if len(self.goal_queue) >= self.MAX_GOAL_QUEUE_SIZE:
             self.get_logger().warning(
                 'Goal queue is full. New waypoint rejected.'
             )
             self.publish_navigation_status(
-                'QUEUE_FULL',
-                'New waypoint rejected because the queue is full',
+                'queue_full',
+                'new_waypoint_rejected',
             )
             return
 
@@ -202,59 +407,54 @@ class Navigation(Node):
             f'queue size={len(self.goal_queue)}'
         )
         self.publish_navigation_status(
-            'WAYPOINT_QUEUED',
-            'Waypoint added to the navigation queue',
+            'waypoint_queued',
+            'waiting_for_current_waypoint',
         )
 
     def activate_goal(self, goal):
         self.goal_x = goal[0]
         self.goal_y = goal[1]
         self.has_goal = True
-        self.clear_planned_path()
-
-        self.get_logger().info(
-            f'Activated goal x={self.goal_x:.3f}, '
-            f'y={self.goal_y:.3f}; '
-            f'queued={len(self.goal_queue)}'
-        )
-        self.publish_navigation_status(
-            'WAYPOINT_QUEUED',
-            'Goal activated; waiting for a valid path',
-        )
+        self.last_goal_time = self.now_seconds()
+        self.clear_planned_path(reset_planning_context=True)
+        self.set_status('planning')
 
     def activate_next_goal(self):
         if self.goal_queue:
-            next_goal = self.goal_queue.popleft()
-            self.activate_goal(next_goal)
+            self.activate_goal(self.goal_queue.popleft())
             return True
 
         self.has_goal = False
-        self.clear_planned_path()
-        self.publish_navigation_status(
-            'IDLE',
-            'All queued waypoints completed',
-        )
+        self.last_goal_time = None
+        self.last_received_goal = None
+        self.clear_planned_path(reset_planning_context=True)
         return False
 
-    def publish_navigation_status(self, state, description=''):
-        """Publish navigation state for the rest of the system."""
-        previous_state = self.navigation_state
-        self.navigation_state = state
-
+    def publish_navigation_status(self, state, description='none'):
+        previous_state = getattr(
+            self,
+            '_last_published_navigation_state',
+            None
+    )
         status = String()
         status.data = json.dumps({
             'state': state,
             'description': description,
+            'blocking_reason': self.blocking_reason,
+            'has_map': self.has_map,
+            'has_pose': self.has_pose,
             'has_active_goal': self.has_goal,
             'active_goal': {
-                'x': self.goal_x,
-                'y': self.goal_y,
+                'x': round(self.goal_x, 3),
+                'y': round(self.goal_y, 3),
             } if self.has_goal else None,
             'queued_goals': len(self.goal_queue),
             'robot_pose': {
-                'x': self.x,
-                'y': self.y,
+                'x': round(self.x, 3),
+                'y': round(self.y, 3),
+                'yaw': round(self.yaw, 3),
             } if self.has_pose else None,
+            'tf_ok': self.tf_ok,
         })
         self.status_publisher.publish(status)
         
@@ -263,15 +463,22 @@ class Navigation(Node):
                 f'({self.goal_x:.2f}, {self.goal_y:.2f})'
                 if self.has_goal
                 else 'none'
-        )   
+        )
 
-            self.get_logger().info(
+            message = (
                 f'NAVIGATION STATUS | '
                 f'state={state} | '
                 f'goal={active_goal_text} | '
                 f'queued={len(self.goal_queue)} | '
                 f'{description}'
         )
+
+            if state in ('no_path', 'outside_map', 'queue_full'):
+                self.get_logger().warning(message)
+            else:
+                self.get_logger().info(message)
+
+        self._last_published_navigation_state = state
 
     def publish_planned_path(self):
         msg = Path()
@@ -289,44 +496,39 @@ class Navigation(Node):
 
         self.path_publisher.publish(msg)
 
-    def clear_planned_path(self):
+    def clear_planned_path(self, reset_planning_context=False):
         self.path = []
         self.path_grid = []
         self.last_planned_start = None
         self.last_planned_goal = None
+        if reset_planning_context:
+            self._last_planning_context = None
         self.publish_planned_path()
 
     def timer_callback(self):
         msg = TargetVector()
 
-        if not self.ready_to_plan():
-            #self.publisher.publish(msg)
-            self.get_logger().info(f"Can't plan, not ready: has map? {self.has_map}, has pose? {self.has_pose}, has goal? {self.has_goal}")
+        readiness_status = self.readiness_status()
+        if readiness_status is not None:
+            self.set_status(*readiness_status)
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
-            reached_x = self.goal_x
-            reached_y = self.goal_y
-
-            # Publish a zero target vector before switching goals.
+            reached_goal = (self.goal_x, self.goal_y)
             self.publisher.publish(msg)
-            self.clear_planned_path()
+            self.clear_planned_path(reset_planning_context=True)
 
             self.get_logger().info(
-                f'Waypoint reached x={reached_x:.3f}, '
-                f'y={reached_y:.3f}'
+                f'Waypoint reached x={reached_goal[0]:.3f}, '
+                f'y={reached_goal[1]:.3f}'
             )
             self.publish_navigation_status(
-                'WAYPOINT_REACHED',
-                f'Reached waypoint ({reached_x:.3f}, {reached_y:.3f})',
+                'waypoint_reached',
+                'activating_next_waypoint',
             )
 
             if not self.activate_next_goal():
-                self.get_logger().info('All queued goals succeeded')
-                self.publish_navigation_status(
-                    'GOAL_REACHED',
-                    'Complete waypoint queue executed',
-                )
+                self.set_status('goal_succeeded')
             return
 
         start = self.world_to_grid(self.x, self.y)
@@ -335,57 +537,39 @@ class Navigation(Node):
         if start is None or goal is None:
             self.clear_planned_path()
             self.publisher.publish(msg)
-            self.get_logger().warning('Robot or goal is outside the map')
-            self.publish_navigation_status(
-                'OUTSIDE_MAP',
-                'Robot or active goal is outside the map',
+            self.set_status(
+                'outside_map',
+                self.outside_map_reason(start, goal),
             )
             return
 
         replan_reason = self.replan_reason(start, goal)
 
         if replan_reason is not None:
+            self.set_planning_status(replan_reason, start, goal)
             planned_path_grid = self.a_star(start, goal)
-            self.get_logger().info(
-                f'Planned path with {len(planned_path_grid)} cells; '
-                f'reason={replan_reason}'
-            )
 
             if not planned_path_grid:
                 self.clear_planned_path()
                 self.publisher.publish(msg)
-                self.get_logger().warning(
-                    'No path to goal found; '
-                    f'reason={replan_reason} '
-                    f'start={start} raw_free={self.is_raw_free(start)} '
-                    f'traversable={self.is_traversable(start)} '
-                    f'goal={goal} raw_free={self.is_raw_free(goal)} '
-                    f'traversable={self.is_traversable(goal)}'
-                )
-                self.publish_navigation_status(
-                    'NO_PATH_FOUND',
-                    'No valid path to the active waypoint',
+                self.set_status(
+                    'no_path',
+                    self.no_path_reason(start, goal),
                 )
                 return
 
             self.path_grid = planned_path_grid
             self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+            self.path_progress = 0.0
             self.last_planned_start = start
             self.last_planned_goal = goal
             self.publish_planned_path()
 
         if not self.path:
             self.publisher.publish(msg)
-            self.get_logger().warning(
-                'No path to goal found; '
-                f'start={start} raw_free={self.is_raw_free(start)} '
-                f'traversable={self.is_traversable(start)} '
-                f'goal={goal} raw_free={self.is_raw_free(goal)} '
-                f'traversable={self.is_traversable(goal)}'
-            )
-            self.publish_navigation_status(
-                'NO_PATH_FOUND',
-                'No valid path to the active waypoint',
+            self.set_status(
+                'no_path',
+                self.no_path_reason(start, goal),
             )
             return
 
@@ -394,10 +578,7 @@ class Navigation(Node):
         msg.linear = linear
         msg.angular = angular
         self.publisher.publish(msg)
-        self.publish_navigation_status(
-            'MOVING',
-            'Following path to active waypoint',
-        )
+        self.set_status('tracking')
 
     def ready_to_plan(self):
         return self.has_map and self.has_pose and self.has_goal
@@ -495,7 +676,7 @@ class Navigation(Node):
                     continue
 
             if self.is_traversable(neighbor) or (neighbor == goal and self.is_raw_free(neighbor)):
-                yield neighbor, cost + self.inflation_penalty(neighbor)
+                yield neighbor, cost + (2.0 if self.is_inflated(neighbor) else 0.0)
 
     def reconstruct_path(self, came_from, current):
         path = [current]
@@ -506,33 +687,114 @@ class Navigation(Node):
         return path
 
     def next_waypoint(self):
-        while len(self.path) > 1:
-            waypoint_x, waypoint_y = self.path[0]
-            if self.distance(self.x, self.y, waypoint_x, waypoint_y) > self.WAYPOINT_TOLERANCE:
-                break
-            self.path.pop(0)
-            self.path_grid.pop(0)
+        path_distance = 0.0
+        projected_progress = self.path_progress
+        projection_distance_squared = math.inf
 
-        index = min(self.WAYPOINT_LOOKAHEAD, len(self.path) - 1)
-        return self.path[index]
+        for segment_start, segment_end in zip(self.path, self.path[1:]):
+            start_x, start_y = segment_start
+            end_x, end_y = segment_end
+            segment_x = end_x - start_x
+            segment_y = end_y - start_y
+            segment_length_squared = (
+                segment_x * segment_x + segment_y * segment_y
+            )
+            if segment_length_squared == 0.0:
+                continue
+
+            segment_length = math.sqrt(segment_length_squared)
+            segment_end_progress = path_distance + segment_length
+            if segment_end_progress < self.path_progress:
+                path_distance = segment_end_progress
+                continue
+
+            minimum_t = self.clamp(
+                (self.path_progress - path_distance) / segment_length,
+                0.0,
+                1.0,
+            )
+            projection_t = self.clamp(
+                (
+                    (self.x - start_x) * segment_x
+                    + (self.y - start_y) * segment_y
+                ) / segment_length_squared,
+                minimum_t,
+                1.0,
+            )
+            projection_x = start_x + projection_t * segment_x
+            projection_y = start_y + projection_t * segment_y
+            distance_squared = (
+                (self.x - projection_x) * (self.x - projection_x)
+                + (self.y - projection_y) * (self.y - projection_y)
+            )
+            if distance_squared < projection_distance_squared:
+                projection_distance_squared = distance_squared
+                projected_progress = (
+                    path_distance + projection_t * segment_length
+                )
+
+            path_distance = segment_end_progress
+
+        self.path_progress = projected_progress
+        lookahead_progress = min(
+            self.path_progress + self.LOOKAHEAD_DISTANCE,
+            path_distance,
+        )
+
+        path_distance = 0.0
+        for segment_start, segment_end in zip(self.path, self.path[1:]):
+            start_x, start_y = segment_start
+            end_x, end_y = segment_end
+            segment_x = end_x - start_x
+            segment_y = end_y - start_y
+            segment_length = math.hypot(segment_x, segment_y)
+            if segment_length == 0.0:
+                continue
+
+            segment_end_progress = path_distance + segment_length
+            if lookahead_progress <= segment_end_progress:
+                target_t = (
+                    lookahead_progress - path_distance
+                ) / segment_length
+                return (
+                    start_x + target_t * segment_x,
+                    start_y + target_t * segment_y,
+                )
+            path_distance = segment_end_progress
+
+        return self.path[-1]
 
     def target_vector_to_waypoint(self, waypoint):
         waypoint_x, waypoint_y = waypoint
         dx = waypoint_x - self.x
         dy = waypoint_y - self.y
-        distance_to_waypoint = math.hypot(dx, dy)
+        cos_yaw = math.cos(self.yaw)
+        sin_yaw = math.sin(self.yaw)
+        robot_x = cos_yaw * dx + sin_yaw * dy
+        robot_y = -sin_yaw * dx + cos_yaw * dy
+        distance_squared = robot_x * robot_x + robot_y * robot_y
+        distance_to_waypoint = math.sqrt(distance_squared)
+        heading_error = math.atan2(robot_y, robot_x)
 
-        desired_yaw = math.atan2(dy, dx)
-        yaw_error = self.normalize_angle(desired_yaw - self.yaw)
+        if abs(heading_error) >= self.TURN_IN_PLACE_THRESHOLD:
+            angular = self.clamp(
+                heading_error,
+                -self.MAX_ANGULAR_SPEED,
+                self.MAX_ANGULAR_SPEED,
+            )
+            return 0.0, angular
 
-        angular = self.clamp(
-            yaw_error * self.ANGULAR_GAIN,
-            -self.MAX_ANGULAR_SPEED,
-            self.MAX_ANGULAR_SPEED
-        )
-
-        turn_scale = max(0.0, 1.0 - abs(yaw_error) / (math.pi / 2.0))
+        turn_scale = max(0.0, 1.0 - abs(heading_error) / (math.pi / 2.0))
         linear = min(self.LINEAR_SPEED, distance_to_waypoint) * turn_scale
+
+        curvature = 0.0
+        if distance_squared > 0.0:
+            curvature = 2.0 * robot_y / distance_squared
+        angular = self.clamp(
+            linear * curvature,
+            -self.MAX_ANGULAR_SPEED,
+            self.MAX_ANGULAR_SPEED,
+        )
 
         return linear, angular
 
@@ -560,19 +822,6 @@ class Navigation(Node):
 
     def is_traversable(self, cell):
         return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
-
-    def inflation_penalty(self, cell):
-        if self.ROBOT_CLEARANCE_RADIUS <= 0.0:
-            return 0.0
-
-        obstacle_distance = self.obstacle_distance(cell)
-        if obstacle_distance >= self.ROBOT_CLEARANCE_RADIUS:
-            return 0.0
-
-        closeness = (
-            self.ROBOT_CLEARANCE_RADIUS - obstacle_distance
-        ) / self.ROBOT_CLEARANCE_RADIUS
-        return self.MAX_INFLATION_COST * closeness * closeness
 
     def is_inflated(self, cell):
         return self.obstacle_distance(cell) < self.ROBOT_CLEARANCE_RADIUS
@@ -676,13 +925,6 @@ class Navigation(Node):
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         return math.atan2(siny_cosp, cosy_cosp)
-
-    def normalize_angle(self, angle):
-        while angle > math.pi:
-            angle -= 2.0 * math.pi
-        while angle < -math.pi:
-            angle += 2.0 * math.pi
-        return angle
 
     def distance(self, x1, y1, x2, y2):
         return math.hypot(x2 - x1, y2 - y1)
