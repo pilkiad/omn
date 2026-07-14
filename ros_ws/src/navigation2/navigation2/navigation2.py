@@ -412,9 +412,11 @@ class Navigation(Node):
 
         if replan_reason is not None:
             self.set_planning_status(replan_reason, start, goal)
+            self.get_logger().info(f"REPLAN because: {replan_reason}")
             planned_path_grid = self.a_star(start, goal)
 #            planned_path_grid = self.theta_star(start, goal)
             if planned_path_grid:
+                planned_path_grid = self.remove_collinear(planned_path_grid)
                 planned_path_grid = self.path_smoothing(planned_path_grid)
             if not planned_path_grid:
                 self.clear_planned_path()
@@ -684,22 +686,59 @@ class Navigation(Node):
         )
         return []
 
-    def path_smoothing(self, path):
+    def remove_collinear(self, path):
         if len(path) <= 2:
             return path
-        smoothed = [path[0]]
+
+        result = [path[0]]
+
+        for i in range(1, len(path)-1):
+            a = result[-1]
+            b = path[i]
+            c = path[i+1]
+
+            if (b[0]-a[0])*(c[1]-a[1]) != (b[1]-a[1])*(c[0]-a[0]):
+                result.append(b)
+
+        result.append(path[-1])
+
+        return result
+
+    def path_smoothing(self, path, horizon=50):
+        n = len(path)
+        if n <= 2:
+            return path
+
+        # Only smooth the first part of the path
+        limit = min(n, horizon)
+        local_path = path[:limit]
+
+        cache = {}
+        los = self.line_of_sight
+
+        def visible(i, j):
+            key = (i, j)
+            if key not in cache:
+                cache[key] = los(local_path[i], local_path[j])
+            return cache[key]
+
+        smoothed = [local_path[0]]
         i = 0
-        while i < len(path) - 1:
-            # Find the furthest visible waypoint
-            j = len(path) - 1
+        local_n = len(local_path)
+
+        while i < local_n - 1:
+            j = min(i + horizon, local_n - 1)
 
             while j > i + 1:
-                if self.line_of_sight(path[i], path[j]):
+                if visible(i, j):
                     break
                 j -= 1
 
-            smoothed.append(path[j])
+            smoothed.append(local_path[j])
             i = j
+
+        # Keep the future path unchanged
+        smoothed.extend(path[limit:])
 
         return smoothed
 
@@ -718,24 +757,30 @@ class Navigation(Node):
         if steps == 0:
             return self.is_traversable(start)
 
+        clearance = self.clearance_cells()
+
+        # Precompute offsets
+        offsets = []
+        for ox in range(-clearance, clearance + 1):
+            for oy in range(-clearance, clearance + 1):
+                if ox * ox + oy * oy <= clearance * clearance:
+                    offsets.append((ox, oy))
+
+        is_raw_free = self.is_raw_free
+        is_traversable = self.is_traversable
+
         for i in range(steps + 1):
             t = i / steps
 
             x = round(x0 + t * dx)
             y = round(y0 + t * dy)
 
-            if not self.is_traversable((x, y)):
+            if not is_traversable((x, y)):
                 return False
 
-            clearance = self.clearance_cells()
-
-            for ox in range(-clearance, clearance + 1):
-                for oy in range(-clearance, clearance + 1):
-                    check = (x + ox, y + oy)
-
-                    if math.hypot(ox, oy) <= clearance:
-                        if not self.is_raw_free(check):
-                            return False
+            for ox, oy in offsets:
+                if not is_raw_free((x + ox, y + oy)):
+                    return False
 
         return True
 
@@ -807,7 +852,7 @@ class Navigation(Node):
             self.MAX_ANGULAR_SPEED
         )
 
-        turn_scale = max(0.0, 1.0 - abs(yaw_error) / (math.pi / 2.0))
+        turn_scale = max(0.5, 1.0 - abs(yaw_error) / (math.pi / 2.0))
         linear = min(self.LINEAR_SPEED, distance_to_waypoint) * turn_scale
 
         return linear, angular
