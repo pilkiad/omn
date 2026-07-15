@@ -1,9 +1,0 @@
-system_manager:
-  ros__parameters:
-    managed_node_names:
-      - camera_processor
-      - lidar_processor
-      - mapping
-      - localization
-      - navigation
-      - motion_controller
