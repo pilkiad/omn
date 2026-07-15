@@ -179,7 +179,7 @@ class Exploration(Node):
             dx = target_position[0] - self.our_position[0]
             dy = target_position[1] - self.our_position[1]
             distance_sq = dx*dx + dy*dy
-            if closest_distance_sq is None or distance_sq < closest_distance_sq:
+            if closest_distance_sq is None or distance_sq > closest_distance_sq:
                 closest_distance_sq = distance_sq
                 closest_position = target_position
 
