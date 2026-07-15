@@ -18,6 +18,17 @@ class Navigation(Node):
     TF_MAP_FRAME = 'map'
     TF_ROBOT_FRAME = 'base_footprint'
     TURN_IN_PLACE_THRESHOLD = math.pi / 3.0
+    SQRT2 = math.sqrt(2.0)
+    _NEIGHBOR_DIRECTIONS = [
+        (-1, 0, 1.0),
+        (1, 0, 1.0),
+        (0, -1, 1.0),
+        (0, 1, 1.0),
+        (-1, -1, math.sqrt(2.0)),
+        (-1, 1, math.sqrt(2.0)),
+        (1, -1, math.sqrt(2.0)),
+        (1, 1, math.sqrt(2.0)),
+    ]
 
     def __init__(self):
         super().__init__('navigation')
@@ -57,15 +68,24 @@ class Navigation(Node):
         self._last_status_signature = None
         self._last_status_log_time = None
         self._last_planning_context = None
+        self._cached_clearance_cells = None
+        self._cached_inflation_offsets = None
+        self._pending_map = None
 
         self.OCCUPIED_THRESHOLD = 50
         # Clearance is measured from the robot center on the planning grid.
         self.ROBOT_CLEARANCE_RADIUS = 0.40
-        self.GOAL_TOLERANCE = 0.50
+        self.GOAL_TOLERANCE = 0.40
         self.LOOKAHEAD_DISTANCE = 0.40
-        self.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
+        self.OFF_PATH_REPLAN_DISTANCE_CELLS = 200
         self.LINEAR_SPEED = 0.125
         self.MAX_ANGULAR_SPEED = 0.45
+
+        self.SMOOTH_MAX_ITERATIONS = 1000
+        self.SMOOTH_W_DATA = 0.2
+        self.SMOOTH_W_SMOOTH = 0.3
+        self.SMOOTH_TOLERANCE = 1e-10
+        self.SMOOTH_REFINEMENTS = 2
 
         planned_path_qos = QoSProfile(
             depth=1,
@@ -127,6 +147,10 @@ class Navigation(Node):
             self.tf_ok = False
             self.tf_error = self.sanitize_error(error)
             if new_failure:
+                self.get_logger().warning(
+                    f'TF lookup failed ({self.tf_map_frame} -> {self.tf_robot_frame}): '
+                    f'{self.tf_error}'
+                )
                 self.log_status(force=True, warning=True)
 
     def sanitize_error(self, error):
@@ -297,17 +321,51 @@ class Navigation(Node):
         )
 
         if not map_changed:
+            self.get_logger().debug('Map received but unchanged, skipping update')
             return
 
-        self.map_width = msg.info.width
-        self.map_height = msg.info.height
-        self.map_resolution = msg.info.resolution
-        self.map_origin_x = msg.info.origin.position.x
-        self.map_origin_y = msg.info.origin.position.y
-        self.env_map = env_map
+        pending = {
+            'width': msg.info.width,
+            'height': msg.info.height,
+            'resolution': msg.info.resolution,
+            'origin_x': msg.info.origin.position.x,
+            'origin_y': msg.info.origin.position.y,
+            'env_map': env_map,
+        }
+
+        if not self.has_map:
+            self.get_logger().info(
+                f'Initial map received: {msg.info.width}x{msg.info.height}, '
+                f'resolution={msg.info.resolution:.3f}'
+            )
+            self._pending_map = pending
+            self._apply_pending_map()
+            return
+
+        self.get_logger().info(
+            f'Map buffered: {msg.info.width}x{msg.info.height}, '
+            f'resolution={msg.info.resolution:.3f} - '
+            f'will apply on next replan'
+        )
+        self._pending_map = pending
+
+    def _apply_pending_map(self):
+        pending = self._pending_map
+        self._pending_map = None
+
+        self.map_width = pending['width']
+        self.map_height = pending['height']
+        self.map_resolution = pending['resolution']
+        self.map_origin_x = pending['origin_x']
+        self.map_origin_y = pending['origin_y']
+        self.env_map = pending['env_map']
+        self._cached_clearance_cells = None
+        self._cached_inflation_offsets = None
         self.obstacle_distance_map = self.build_obstacle_distance_map()
         self.has_map = True
-        self.clear_planned_path(reset_planning_context=True)
+        self._last_planning_context = None
+
+        self.get_logger().info('Buffered map applied to active state')
 
     def pos_callback(self, msg):
         self.update_pose(msg.pose)
@@ -346,6 +404,10 @@ class Navigation(Node):
                 )
                 return
 
+        self.get_logger().info(
+            f'New goal received: ({goal_x:.2f},{goal_y:.2f}) '
+            f'from frame="{source_frame}"'
+        )
         self.goal_x = goal_x
         self.goal_y = goal_y
         self.has_goal = True
@@ -369,6 +431,10 @@ class Navigation(Node):
         self.path_publisher.publish(msg)
 
     def clear_planned_path(self, reset_planning_context=False):
+        self.get_logger().debug(
+            f'Clearing planned path ({len(self.path)} waypoints), '
+            f'reset_planning_context={reset_planning_context}'
+        )
         self.path = []
         self.path_grid = []
         self.last_planned_start = None
@@ -377,15 +443,51 @@ class Navigation(Node):
             self._last_planning_context = None
         self.publish_planned_path()
 
+    def smooth_path(self, path):
+        if len(path) <= 2:
+            return path
+
+        smoothed = list(path)
+        for _refinement in range(self.SMOOTH_REFINEMENTS + 1):
+            previous = list(smoothed)
+            change = 0.0
+            for i in range(1, len(smoothed) - 1):
+                for dim in range(2):
+                    x_orig = path[i][dim]
+                    y_curr = smoothed[i][dim]
+                    y_prev = smoothed[i - 1][dim]
+                    y_next = smoothed[i + 1][dim]
+                    y_new = (
+                        y_curr
+                        + self.SMOOTH_W_DATA * (x_orig - y_curr)
+                        + self.SMOOTH_W_SMOOTH * (y_next + y_prev - 2.0 * y_curr)
+                    )
+                    change += abs(y_new - y_curr)
+                    smoothed[i] = (
+                        smoothed[i][0] if dim == 1 else y_new,
+                        smoothed[i][1] if dim == 0 else y_new,
+                    )
+            if change < self.SMOOTH_TOLERANCE:
+                break
+
+        return smoothed
+
     def timer_callback(self):
         msg = TargetVector()
 
         readiness_status = self.readiness_status()
         if readiness_status is not None:
+            self.get_logger().debug(
+                f'Not ready to plan: {readiness_status[1]}'
+            )
             self.set_status(*readiness_status)
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
+            self.get_logger().info(
+                f'Goal reached ({self.goal_x:.2f},{self.goal_y:.2f}) '
+                f'within tolerance {self.GOAL_TOLERANCE:.2f}m'
+            )
             self.clear_planned_path()
             self.has_goal = False
             self.publisher.publish(msg)
@@ -396,6 +498,10 @@ class Navigation(Node):
         goal = self.world_to_grid(self.goal_x, self.goal_y)
 
         if start is None or goal is None:
+            self.get_logger().warning(
+                f'Pose or goal outside map bounds: '
+                f'start={start} goal={goal}'
+            )
             self.clear_planned_path()
             self.publisher.publish(msg)
             self.set_status(
@@ -406,11 +512,38 @@ class Navigation(Node):
 
         replan_reason = self.replan_reason(start, goal)
 
+        # Apply buffered map when replanning is triggered
+        if replan_reason is not None and self._pending_map is not None:
+            self._apply_pending_map()
+            start = self.world_to_grid(self.x, self.y)
+            goal = self.world_to_grid(self.goal_x, self.goal_y)
+            if start is None or goal is None:
+                self.get_logger().warning(
+                    f'After map update, pose or goal outside bounds: '
+                    f'start={start} goal={goal}'
+                )
+                self.clear_planned_path()
+                self.publisher.publish(msg)
+                self.set_status(
+                    'outside_map',
+                    self.outside_map_reason(start, goal),
+                )
+                return
+            replan_reason = 'map updated'
+
         if replan_reason is not None:
+            self.get_logger().info(
+                f'Replanning: reason="{replan_reason}" '
+                f'start={start} goal={goal}'
+            )
             self.set_planning_status(replan_reason, start, goal)
             planned_path_grid = self.a_star(start, goal)
 
             if not planned_path_grid:
+                self.get_logger().warning(
+                    f'Path planning failed: reason="{self.no_path_reason(start, goal)}" '
+                    f'start={start} goal={goal}'
+                )
                 self.clear_planned_path()
                 self.publisher.publish(msg)
                 self.set_status(
@@ -419,14 +552,22 @@ class Navigation(Node):
                 )
                 return
 
+            self.get_logger().info(
+                f'Path planned: {len(planned_path_grid)} cells, '
+                f'start={start} goal={goal}'
+            )
             self.path_grid = planned_path_grid
             self.path = [self.grid_to_world(cell) for cell in self.path_grid]
+            self.path = self.smooth_path(self.path)
             self.path_progress = 0.0
             self.last_planned_start = start
             self.last_planned_goal = goal
             self.publish_planned_path()
 
         if not self.path:
+            self.get_logger().warning(
+                f'No path available: reason="{self.no_path_reason(start, goal)}"'
+            )
             self.publisher.publish(msg)
             self.set_status(
                 'no_path',
@@ -446,15 +587,25 @@ class Navigation(Node):
 
     def replan_reason(self, start, goal):
         if not self.path or not self.path_grid:
+            self.get_logger().debug('Replan: no current path exists')
             return 'no current path'
 
         if goal != self.last_planned_goal:
+            self.get_logger().debug(
+                f'Replan: goal changed from {self.last_planned_goal} to {goal}'
+            )
             return 'goal changed'
 
         if self.path_is_blocked(start, goal):
+            self.get_logger().debug(f'Replan: path blocked at start={start}')
             return 'path blocked'
 
-        if self.distance_to_path_grid(start) > self.OFF_PATH_REPLAN_DISTANCE_CELLS:
+        distance = self.distance_to_path_grid(start)
+        if distance > self.OFF_PATH_REPLAN_DISTANCE_CELLS:
+            self.get_logger().debug(
+                f'Replan: robot off path, distance={distance:.0f} cells '
+                f'(threshold={self.OFF_PATH_REPLAN_DISTANCE_CELLS})'
+            )
             return 'robot off path'
 
         return None
@@ -463,10 +614,16 @@ class Navigation(Node):
         for cell in self.path_grid:
             if cell == start or cell == goal:
                 if not self.is_raw_free(cell):
+                    self.get_logger().debug(
+                        f'Path blocked: endpoint {cell} is occupied'
+                    )
                     return True
                 continue
 
             if not self.is_traversable(cell):
+                self.get_logger().debug(
+                    f'Path blocked: cell {cell} not traversable'
+                )
                 return True
 
         return False
@@ -482,23 +639,35 @@ class Navigation(Node):
 
     def a_star(self, start, goal):
         if not self.is_raw_free(start) or not self.is_raw_free(goal):
+            self.get_logger().debug(
+                f'A*: start or goal blocked: start={start} free={self.is_raw_free(start)} '
+                f'goal={goal} free={self.is_raw_free(goal)}'
+            )
             return []
 
+        self.get_logger().debug(
+            f'A*: planning from {start} to {goal}'
+        )
         open_set = []
         heapq.heappush(open_set, (0.0, start))
         came_from = {}
         g_score = {start: 0.0}
         closed = set()
+        expansions = 0
 
         while open_set:
             _, current = heapq.heappop(open_set)
 
             if current == goal:
+                self.get_logger().debug(
+                    f'A*: found path in {expansions} expansions'
+                )
                 return self.reconstruct_path(came_from, current)
 
             if current in closed:
                 continue
             closed.add(current)
+            expansions += 1
 
             for neighbor, step_cost in self.neighbors(current, goal):
                 if neighbor in closed:
@@ -513,22 +682,15 @@ class Navigation(Node):
                 f_score = new_score + self.heuristic(neighbor, goal)
                 heapq.heappush(open_set, (f_score, neighbor))
 
+        self.get_logger().warning(
+            f'A*: exhausted after {expansions} expansions, no path from {start} to {goal}'
+        )
         return []
 
     def neighbors(self, cell, goal):
         x, y = cell
-        directions = [
-            (-1, 0, 1.0),
-            (1, 0, 1.0),
-            (0, -1, 1.0),
-            (0, 1, 1.0),
-            (-1, -1, math.sqrt(2.0)),
-            (-1, 1, math.sqrt(2.0)),
-            (1, -1, math.sqrt(2.0)),
-            (1, 1, math.sqrt(2.0)),
-        ]
 
-        for dx, dy, cost in directions:
+        for dx, dy, cost in self._NEIGHBOR_DIRECTIONS:
             neighbor = (x + dx, y + dy)
             if dx != 0 and dy != 0:
                 adjacent_x = (x + dx, y)
@@ -551,8 +713,11 @@ class Navigation(Node):
         path_distance = 0.0
         projected_progress = self.path_progress
         projection_distance_squared = math.inf
+        projection_segment = -1
 
-        for segment_start, segment_end in zip(self.path, self.path[1:]):
+        for i, (segment_start, segment_end) in enumerate(
+            zip(self.path, self.path[1:])
+        ):
             start_x, start_y = segment_start
             end_x, end_y = segment_end
             segment_x = end_x - start_x
@@ -593,6 +758,7 @@ class Navigation(Node):
                 projected_progress = (
                     path_distance + projection_t * segment_length
                 )
+                projection_segment = i
 
             path_distance = segment_end_progress
 
@@ -603,7 +769,17 @@ class Navigation(Node):
         )
 
         path_distance = 0.0
-        for segment_start, segment_end in zip(self.path, self.path[1:]):
+        path_segments = list(zip(self.path, self.path[1:]))
+        # Skip ahead to the segment containing the projection
+        start_index = max(0, projection_segment)
+        for i, (segment_start, segment_end) in enumerate(path_segments):
+            if i < start_index:
+                # Accumulate distance for skipped segments
+                sx, sy = segment_start
+                ex, ey = segment_end
+                path_distance += math.hypot(ex - sx, ey - sy)
+                continue
+
             start_x, start_y = segment_start
             end_x, end_y = segment_end
             segment_x = end_x - start_x
@@ -716,18 +892,26 @@ class Navigation(Node):
             return obstacle_distance_map
 
         offsets = self.inflation_offsets()
+        map_width = self.map_width
+        map_height = self.map_height
         for index, value in enumerate(self.env_map):
             if not self.raw_value_blocked(value):
                 continue
 
-            obstacle_x = index % self.map_width
-            obstacle_y = index // self.map_width
+            obstacle_x = index % map_width
+            obstacle_y = index // map_width
             for dx, dy, distance in offsets:
-                nearby_cell = (obstacle_x + dx, obstacle_y + dy)
-                if not self.in_bounds(nearby_cell):
+                nearby_x = obstacle_x + dx
+                nearby_y = obstacle_y + dy
+                if (
+                    nearby_x < 0
+                    or nearby_x >= map_width
+                    or nearby_y < 0
+                    or nearby_y >= map_height
+                ):
                     continue
 
-                nearby_index = self.map_index(nearby_cell)
+                nearby_index = nearby_y * map_width + nearby_x
                 obstacle_distance_map[nearby_index] = min(
                     obstacle_distance_map[nearby_index],
                     distance,
@@ -736,6 +920,9 @@ class Navigation(Node):
         return obstacle_distance_map
 
     def inflation_offsets(self):
+        if self._cached_inflation_offsets is not None:
+            return self._cached_inflation_offsets
+
         if self.map_resolution <= 0.0:
             return [(0, 0, 0.0)]
 
@@ -747,6 +934,7 @@ class Navigation(Node):
                 if cell_distance <= clearance_cells:
                     offsets.append((dx, dy, cell_distance * self.map_resolution))
 
+        self._cached_inflation_offsets = offsets
         return offsets
 
     def has_map_edge_clearance(self, cell):
@@ -763,10 +951,16 @@ class Navigation(Node):
         )
 
     def clearance_cells(self):
+        if self._cached_clearance_cells is not None:
+            return self._cached_clearance_cells
+
         if self.map_resolution <= 0.0:
             return 0
 
-        return math.ceil(self.ROBOT_CLEARANCE_RADIUS / self.map_resolution)
+        self._cached_clearance_cells = math.ceil(
+            self.ROBOT_CLEARANCE_RADIUS / self.map_resolution
+        )
+        return self._cached_clearance_cells
 
     def raw_value_blocked(self, value):
         return value < 0 or value >= self.OCCUPIED_THRESHOLD
