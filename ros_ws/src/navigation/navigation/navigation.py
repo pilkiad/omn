@@ -61,10 +61,10 @@ class Navigation(Node):
         self.OCCUPIED_THRESHOLD = 50
         # Clearance is measured from the robot center on the planning grid.
         self.ROBOT_CLEARANCE_RADIUS = 0.40
-        self.GOAL_TOLERANCE = 0.10
+        self.GOAL_TOLERANCE = 0.50
         self.LOOKAHEAD_DISTANCE = 0.40
         self.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
-        self.LINEAR_SPEED = 0.11
+        self.LINEAR_SPEED = 0.125
         self.MAX_ANGULAR_SPEED = 0.45
 
         planned_path_qos = QoSProfile(
