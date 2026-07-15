@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 
+from std_msgs.msg import Float64
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import PoseStamped
@@ -25,6 +26,7 @@ class Exploration(Node):
 
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.pose_subscription = self.create_subscription(PoseStamped, '/pose', self.pose_callback, 1)
+        self.ratio_publisher = self.create_publisher(Float64, '/exploration_ratio', 10)
         self.exploration_time = self.create_timer(10, self.exploration_callback)
 
     def get_cell_at(self, x, y):
@@ -82,6 +84,10 @@ class Exploration(Node):
 
         ratio = frontier_count / ground_count
         self.get_logger().info(f"Exploration: {ratio*100}%")
+
+        msg = Float64()
+        msg.data = ratio
+        self.ratio_publisher.publish(msg)
 
     def pose_callback(self, msg):
         self.our_position = [ msg.pose.position.x, msg.pose.position.y ]
