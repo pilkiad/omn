@@ -185,8 +185,8 @@ class Exploration(LifecycleNode):
 
                 empty_count = 0
                 wall_count = 0
-                for oy in range(-5, 5):
-                    for ox in range(-5, 5):
+                for oy in range(-10, 10):
+                    for ox in range(-10, 10):
                         other_cell = self.get_cell_at(x+ox,y+oy)
                         if other_cell == -1:
                             empty_count += 1
@@ -194,7 +194,7 @@ class Exploration(LifecycleNode):
                             wall_count += 1
 
                 # Only look at free cells
-                if cell_value != 0 or empty_count < 10 or wall_count > 3 or not self.is_reachable([x,y]):
+                if cell_value != 0 or empty_count < 10 or wall_count > 0 or not self.is_reachable([x,y]):
                     continue
 
                 # Note the position as desireable
@@ -207,7 +207,7 @@ class Exploration(LifecycleNode):
             dx = target_position[0] - self.our_position[0]
             dy = target_position[1] - self.our_position[1]
             distance_sq = dx*dx + dy*dy
-            if closest_distance_sq is None or distance_sq > closest_distance_sq:
+            if closest_distance_sq is None or distance_sq < closest_distance_sq:
                 closest_distance_sq = distance_sq
                 closest_position = target_position
 
