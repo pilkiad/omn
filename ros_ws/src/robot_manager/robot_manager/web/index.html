@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OMN Robot Manager</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot" id="conn-dot" title="dashboard connection"></span>
+    <h1>OMN Robot Manager</h1>
+    <span class="chip" id="mode-chip">–</span>
+  </div>
+  <div class="topbar-status">
+    <span class="lifecycle-badge" id="lifecycle-badge">BOOT</span>
+    <span class="chip subtle" id="health-chip">health: –</span>
+    <span class="chip subtle" id="battery-chip">battery: –</span>
+    <button class="btn danger" id="estop-btn">E-STOP</button>
+  </div>
+</header>
+
+<div class="banner hidden" id="alert-banner"></div>
+
+<main class="layout">
+  <!-- ============ MAP / LOCALIZATION ============ -->
+  <section class="card map-card">
+    <div class="card-head">
+      <h2>Live localization</h2>
+      <span class="hint">click the map to send a navigation goal</span>
+    </div>
+    <div class="map-wrap" id="map-wrap">
+      <canvas id="map-canvas"></canvas>
+      <div class="map-overlay" id="map-overlay">
+        <div class="pose-readout">
+          <div class="pose-item"><span class="pose-label">x</span><span class="pose-value" id="pose-x">–</span><span class="pose-unit">m</span></div>
+          <div class="pose-item"><span class="pose-label">y</span><span class="pose-value" id="pose-y">–</span><span class="pose-unit">m</span></div>
+          <div class="pose-item"><span class="pose-label">θ</span><span class="pose-value" id="pose-yaw">–</span><span class="pose-unit">°</span></div>
+          <div class="pose-item"><span class="pose-label">v</span><span class="pose-value" id="pose-speed">–</span><span class="pose-unit">m/s</span></div>
+        </div>
+        <div class="map-meta" id="map-meta">no map yet</div>
+      </div>
+    </div>
+    <div class="legend-row">
+      <span class="lg"><i class="sw robot"></i>robot</span>
+      <span class="lg"><i class="sw path"></i>planned path</span>
+      <span class="lg"><i class="sw trail"></i>trail</span>
+      <span class="lg"><i class="sw goal"></i>goal</span>
+      <span class="lg"><i class="sw unknown"></i>unexplored</span>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT COLUMN ============ -->
+  <div class="col">
+
+    <section class="card">
+      <div class="card-head"><h2>Lifecycle</h2></div>
+      <div class="pipeline" id="pipeline"></div>
+      <ul class="lifecycle-history" id="lifecycle-history"></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Task</h2>
+        <div class="btn-row">
+          <button class="btn" id="explore-btn">Explore</button>
+          <button class="btn" id="follow-red-btn">Follow red cube</button>
+          <button class="btn" id="remap-btn">Re-map</button>
+          <button class="btn subtle" id="cancel-btn">Cancel</button>
+        </div>
+      </div>
+      <div id="active-task" class="active-task none">no active task</div>
+      <ul class="task-history" id="task-history"></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Health monitor</h2>
+        <div class="btn-row" id="sim-tools" hidden>
+          <button class="btn subtle" id="fault-btn">Drop LiDAR (sim)</button>
+        </div>
+      </div>
+      <table class="health-table">
+        <thead><tr><th>component</th><th>status</th><th>rate</th><th>age</th></tr></thead>
+        <tbody id="health-body"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>SLAM performance</h2></div>
+      <div class="slam-tiles">
+        <div class="tile">
+          <span class="tile-label">confidence</span>
+          <span class="tile-value" id="slam-confidence">–</span>
+          <span class="tile-sub" id="slam-hold">threshold 97%</span>
+        </div>
+        <div class="tile"><span class="tile-label">unknown</span><span class="tile-value sm" id="slam-unknown">–</span></div>
+        <div class="tile"><span class="tile-label">frontier</span><span class="tile-value sm" id="slam-frontier">–</span></div>
+        <div class="tile"><span class="tile-label">growth</span><span class="tile-value sm" id="slam-growth">–</span></div>
+      </div>
+      <div class="chart-legend">
+        <span class="lg"><i class="sw s1"></i>confidence</span>
+        <span class="lg"><i class="sw s3"></i>unknown ratio</span>
+        <span class="lg"><i class="sw thr"></i>convergence threshold</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="slam-chart" height="150"></canvas>
+        <div class="chart-tip hidden" id="chart-tip"></div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<div class="toast hidden" id="toast"></div>
+<script src="/web/app.js"></script>
+</body>
+</html>
