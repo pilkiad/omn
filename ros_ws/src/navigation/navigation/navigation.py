@@ -72,9 +72,10 @@ class Navigation(Node):
         self._cached_inflation_offsets = None
         self._pending_map = None
 
-        self.OCCUPIED_THRESHOLD = 50
+        self.OCCUPIED_THRESHOLD = 100
         # Clearance is measured from the robot center on the planning grid.
-        self.ROBOT_CLEARANCE_RADIUS = 0.40
+        self.ROBOT_CLEARANCE_RADIUS = 0.25
+        self.OBSTACLE_INFLATION_RADIUS = 0.20
         self.GOAL_TOLERANCE = 0.40
         self.LOOKAHEAD_DISTANCE = 0.40
         self.OFF_PATH_REPLAN_DISTANCE_CELLS = 200
@@ -699,7 +700,7 @@ class Navigation(Node):
                     continue
 
             if self.is_traversable(neighbor) or (neighbor == goal and self.is_raw_free(neighbor)):
-                yield neighbor, cost + (2.0 if self.is_inflated(neighbor) else 0.0)
+                yield neighbor, cost + (50.0 if self.is_inflated(neighbor) else 0.0)
 
     def reconstruct_path(self, came_from, current):
         path = [current]
@@ -858,10 +859,16 @@ class Navigation(Node):
         return self.is_traversable(cell) and not self.is_inflated(cell)
 
     def is_traversable(self, cell):
-        return self.is_raw_free(cell) and self.has_map_edge_clearance(cell)
+        return (
+            self.is_raw_free(cell)
+            and self.has_map_edge_clearance(cell)
+        )
 
     def is_inflated(self, cell):
-        return self.obstacle_distance(cell) < self.ROBOT_CLEARANCE_RADIUS
+        return self.obstacle_distance(cell) < self.total_inflation_radius()
+
+    def total_inflation_radius(self):
+        return self.ROBOT_CLEARANCE_RADIUS + self.OBSTACLE_INFLATION_RADIUS
 
     def obstacle_distance(self, cell):
         if len(self.obstacle_distance_map) != len(self.env_map):
@@ -958,7 +965,7 @@ class Navigation(Node):
             return 0
 
         self._cached_clearance_cells = math.ceil(
-            self.ROBOT_CLEARANCE_RADIUS / self.map_resolution
+            self.total_inflation_radius() / self.map_resolution
         )
         return self._cached_clearance_cells
 
