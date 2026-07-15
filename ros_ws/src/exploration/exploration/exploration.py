@@ -1,5 +1,5 @@
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 
 from geometry_msgs.msg import PoseStamped
 from collision_interfaces.msg import TargetVector
@@ -12,7 +12,7 @@ import random
 import time
 from collections import deque
 
-class Exploration(Node):
+class Exploration(LifecycleNode):
     def __init__(self):
         super().__init__("exploration")
 
@@ -32,14 +32,42 @@ class Exploration(Node):
 
         self.already_visited = []
 
-        self.publisher = self.create_publisher(PoseStamped, "/goal_pose", 1)
+    # ---------------------------
+    # LIFECYCLE
+    # ---------------------------
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring exploration node")
+
+        self.publisher = self.create_lifecycle_publisher(PoseStamped, "/goal_pose", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
         self.exploration_time = self.create_timer(10, self.exploration_callback)
-        self.marker_pub = self.create_publisher(MarkerArray, '/exploration_markers', 1)
+        self.marker_pub = self.create_lifecycle_publisher(MarkerArray, '/exploration_markers', 1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_timer = self.create_timer(0.1, self.get_tf)
+
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State):
+        self.get_logger().info("Activating exploration node")
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State):
+        self.get_logger().info("Deactivating exploration node")
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up exploration node")
+
+        self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_subscription(self.map_subscription)
+        self.destroy_subscription(self.target_vector_subscription)
+        self.destroy_timer(self.exploration_time)
+        self.destroy_lifecycle_publisher(self.marker_pub)
+        self.destroy_timer(self.tf_timer)
+
+        return TransitionCallbackReturn.SUCCESS
 
     def target_vector_callback(self, msg):
         self.target_vector = [ msg.linear, msg.angular ]
@@ -193,7 +221,9 @@ class Exploration(Node):
         self.publish_markers()
 
     def publish_markers(self):
-        print("lol")
+        if not self.publisher.is_activated:
+            return
+
         marker_array = MarkerArray()
 
         for idx, pos in enumerate(self.marker_positions):
@@ -216,11 +246,13 @@ class Exploration(Node):
             marker.color.a = 0.8
             marker_array.markers.append(marker)
 
-        # Marker publizieren
         if marker_array.markers:
             self.marker_pub.publish(marker_array)
 
     def send_position(self, position):
+        if not self.publisher.is_activated:
+            return
+
         self.already_visited.append(position)
         msg = PoseStamped()
         msg.header.frame_id = "map"
@@ -249,10 +281,16 @@ class Exploration(Node):
 def main():
     rclpy.init()
     exploration = Exploration()
+
+    exploration.trigger_configure()
+    exploration.trigger_activate()
+
     try:
         rclpy.spin(exploration)
     except KeyboardInterrupt:
         pass
     finally:
+        exploration.trigger_deactivate()
+        exploration.trigger_cleanup()
         exploration.destroy_node()
         rclpy.shutdown()

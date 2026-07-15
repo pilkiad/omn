@@ -9,7 +9,7 @@ Will explore the environment by
 """
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
@@ -19,7 +19,7 @@ from std_msgs.msg import Bool
 import math
 import random
 
-class BlindExploration(Node):
+class BlindExploration(LifecycleNode):
     def __init__(self):
         super().__init__("blind_exploration")
 
@@ -42,13 +42,42 @@ class BlindExploration(Node):
         self.drift_shuffle_c = 0
         self.no_drift_counter = 0
 
-        # Handle topics
+    # ---------------------------
+    # LIFECYCLE
+    # ---------------------------
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring blind exploration node")
+
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
-        self.publisher = self.create_publisher(TargetVector, "/target_vector", 1)
-        self.unstuck_publisher = self.create_publisher(Bool, "/toggle_unstuck", 1)
+        self.publisher = self.create_lifecycle_publisher(TargetVector, "/target_vector", 1)
+        self.unstuck_publisher = self.create_lifecycle_publisher(Bool, "/toggle_unstuck", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
 
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State):
+        self.get_logger().info("Activating blind exploration node")
         self.toggle_unstuck(True)
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State):
+        self.get_logger().info("Deactivating blind exploration node")
+        stop_msg = TargetVector()
+        stop_msg.linear = 0.0
+        stop_msg.angular = 0.0
+        self.toggle_unstuck(False)
+        self.publisher.publish(stop_msg)
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up blind exploration node")
+
+        self.destroy_subscription(self.scan_subscription)
+        self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_lifecycle_publisher(self.unstuck_publisher)
+        self.destroy_timer(self.timer)
+
+        return TransitionCallbackReturn.SUCCESS
 
     def toggle_unstuck(self, state):
         msg = Bool()
@@ -103,6 +132,9 @@ class BlindExploration(Node):
             self.target_vector = [self.target_vector[0] + self.drift[0], self.target_vector[1] + self.drift[1]]
 
     def timer_callback(self):
+        if not self.publisher.is_activated:
+            return
+
         msg = TargetVector()
 
         # Shuffle the drift every now and then
@@ -124,16 +156,16 @@ class BlindExploration(Node):
 def main():
     rclpy.init()
     blindExploration = BlindExploration()
+
+    blindExploration.trigger_configure()
+    blindExploration.trigger_activate()
+
     try:
         rclpy.spin(blindExploration)
     except KeyboardInterrupt:
         pass
     finally:
-        stop_msg = TargetVector()
-        stop_msg.linear = 0.0
-        stop_msg.angular = 0.0
-
-        blindExploration.toggle_unstuck(False)
-        blindExploration.publisher.publish(stop_msg)
+        blindExploration.trigger_deactivate()
+        blindExploration.trigger_cleanup()
         blindExploration.destroy_node()
         rclpy.shutdown()
