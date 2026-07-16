@@ -9,12 +9,21 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            background: #f0f1f4;
+            background: #f2f3f7;
             color: #2d2d3a;
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             overflow: hidden;
             height: 100vh;
             width: 100vw;
+        }
+
+        .grid-bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            background-image: radial-gradient(circle at 1px 1px, #dcdce4 1px, transparent 0);
+            background-size: 36px 36px;
+            opacity: 0.5;
         }
 
         #header {
@@ -25,15 +34,17 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: rgba(240, 241, 244, 0.85);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid #d8d9de;
+            background: rgba(255,255,255,0.65);
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
+            border-bottom: 1px solid rgba(0,0,0,0.06);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 6px rgba(0,0,0,0.04);
         }
 
         #header h1 {
-            font-size: 1rem;
+            font-size: 0.85rem;
             font-weight: 600;
-            letter-spacing: 1px;
+            letter-spacing: 1.5px;
             color: #6b6b80;
             text-transform: uppercase;
         }
@@ -42,18 +53,18 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
-            letter-spacing: 1px;
+            letter-spacing: 1.2px;
         }
 
         .ws-dot {
-            width: 8px; height: 8px;
+            width: 7px; height: 7px;
             border-radius: 50%;
-            transition: all 0.3s;
+            transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
         }
-        .ws-connected { background: #27ae60; box-shadow: 0 0 8px rgba(39,174,96,0.5); }
-        .ws-disconnected { background: #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,0.4); }
+        .ws-connected { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.5); }
+        .ws-disconnected { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.4); }
 
         #graph-canvas {
             position: absolute;
@@ -85,152 +96,160 @@
 
         .node:hover .node-body {
             transform: scale(1.08);
-            border-color: #a0a0b8;
+            border-color: #b0b0c4;
         }
 
         .node-body {
-            width: 90px;
-            height: 90px;
-            border-radius: 18px;
-            background: #ffffff;
-            border: 2px solid #d4d5dc;
+            width: 80px;
+            height: 80px;
+            border-radius: 22px;
+            background: rgba(255,255,255,0.72);
+            border: 1px solid rgba(0,0,0,0.06);
             display: flex;
             align-items: center;
             justify-content: center;
             position: relative;
-            transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.5s ease;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+            transition: transform 0.3s cubic-bezier(0.23, 1, 0.32, 1),
+                        border-color 0.3s ease, box-shadow 0.4s ease;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
+            backdrop-filter: blur(16px) saturate(1.2);
+            -webkit-backdrop-filter: blur(16px) saturate(1.2);
         }
 
         .node-body::before {
             content: '';
             position: absolute;
             inset: -3px;
-            border-radius: 20px;
+            border-radius: 24px;
             background: conic-gradient(from 0deg, transparent, transparent);
             z-index: -1;
             transition: background 0.5s ease;
-            opacity: 0.5;
+            opacity: 0;
         }
 
         .node-active .node-body {
-            border-color: #27ae60;
-            box-shadow: 0 0 20px rgba(39, 174, 96, 0.12),
-                        0 2px 12px rgba(0,0,0,0.04);
+            border-color: rgba(34, 197, 94, 0.3);
+            box-shadow: 0 2px 16px rgba(34, 197, 94, 0.1),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
         }
         .node-active .node-body::before {
-            background: conic-gradient(from 0deg, #27ae60, transparent, transparent, #27ae60);
+            background: conic-gradient(from 0deg, rgba(34,197,94,0.4), transparent, transparent, rgba(34,197,94,0.4));
+            opacity: 0.4;
         }
 
         .node-configuring .node-body {
-            border-color: #f39c12;
-            box-shadow: 0 0 20px rgba(243, 156, 18, 0.1),
-                        0 2px 12px rgba(0,0,0,0.04);
+            border-color: rgba(234, 179, 8, 0.3);
+            box-shadow: 0 2px 16px rgba(234, 179, 8, 0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
         }
         .node-configuring .node-body::before {
-            background: conic-gradient(from 0deg, #f39c12, transparent, transparent, #f39c12);
+            background: conic-gradient(from 0deg, rgba(234,179,8,0.35), transparent, transparent, rgba(234,179,8,0.35));
+            opacity: 0.35;
         }
 
         .node-unconfigured .node-body {
-            border-color: #e74c3c;
-            box-shadow: 0 0 16px rgba(231, 76, 60, 0.08),
-                        0 2px 12px rgba(0,0,0,0.04);
+            border-color: rgba(239, 68, 68, 0.2);
+            box-shadow: 0 2px 12px rgba(239, 68, 68, 0.06),
+                        inset 0 1px 0 rgba(255,255,255,0.85);
         }
         .node-unconfigured .node-body::before {
-            background: conic-gradient(from 0deg, #e74c3c, transparent, transparent, #e74c3c);
+            background: conic-gradient(from 0deg, rgba(239,68,68,0.25), transparent, transparent, rgba(239,68,68,0.25));
+            opacity: 0.25;
         }
 
         .node-icon {
-            width: 32px; height: 32px;
-            color: #8888a0;
-            transition: color 0.5s ease;
+            width: 30px; height: 30px;
+            color: #9898ac;
+            transition: color 0.4s ease;
         }
-        .node-active .node-icon { color: #27ae60; }
-        .node-configuring .node-icon { color: #f39c12; }
-        .node-unconfigured .node-icon { color: #e74c3c; }
+        .node-active .node-icon { color: #16a34a; }
+        .node-configuring .node-icon { color: #ca8a04; }
+        .node-unconfigured .node-icon { color: #dc2626; }
 
         .led-core {
-            width: 18px; height: 18px;
+            width: 16px; height: 16px;
             border-radius: 50%;
             transition: all 0.5s ease;
         }
         .node-active .led-core {
-            background: #27ae60;
-            box-shadow: 0 0 10px #27ae60, 0 0 25px rgba(39, 174, 96, 0.35);
+            background: #22c55e;
+            box-shadow: 0 0 8px #22c55e, 0 0 20px rgba(34,197,94,0.3);
         }
         .node-configuring .led-core {
-            background: #f39c12;
-            box-shadow: 0 0 10px #f39c12, 0 0 25px rgba(243, 156, 18, 0.35);
+            background: #eab308;
+            box-shadow: 0 0 8px #eab308, 0 0 20px rgba(234,179,8,0.3);
         }
         .node-unconfigured .led-core {
-            background: #e74c3c;
-            box-shadow: 0 0 10px #e74c3c, 0 0 25px rgba(231, 76, 60, 0.35);
+            background: #ef4444;
+            box-shadow: 0 0 8px #ef4444, 0 0 20px rgba(239,68,68,0.25);
         }
 
         .node-label {
-            font-size: 0.65rem;
+            font-size: 0.58rem;
             font-weight: 600;
             letter-spacing: 0.5px;
             text-align: center;
-            max-width: 110px;
+            max-width: 100px;
             word-wrap: break-word;
             line-height: 1.3;
             color: #8888a0;
             transition: color 0.3s;
         }
-        .node-active .node-label { color: #1e8449; }
-        .node-configuring .node-label { color: #b8860b; }
-        .node-unconfigured .node-label { color: #c0392b; }
+        .node-active .node-label { color: #15803d; }
+        .node-configuring .node-label { color: #a16207; }
+        .node-unconfigured .node-label { color: #b91c1c; }
 
         .node-state-badge {
-            font-size: 0.55rem;
+            font-size: 0.48rem;
             font-weight: 700;
             letter-spacing: 1.5px;
             text-transform: uppercase;
             padding: 2px 8px;
-            border-radius: 6px;
+            border-radius: 14px;
             background: rgba(0,0,0,0.03);
-            border: 1px solid rgba(0,0,0,0.06);
+            border: 1px solid rgba(0,0,0,0.05);
             transition: all 0.3s;
         }
         .node-active .node-state-badge {
-            color: #27ae60;
-            border-color: rgba(39, 174, 96, 0.25);
-            background: rgba(39, 174, 96, 0.06);
+            color: #16a34a;
+            border-color: rgba(34,197,94,0.2);
+            background: rgba(34,197,94,0.06);
         }
         .node-configuring .node-state-badge {
-            color: #f39c12;
-            border-color: rgba(243, 156, 18, 0.25);
-            background: rgba(243, 156, 18, 0.06);
+            color: #ca8a04;
+            border-color: rgba(234,179,8,0.2);
+            background: rgba(234,179,8,0.06);
         }
         .node-unconfigured .node-state-badge {
-            color: #e74c3c;
-            border-color: rgba(231, 76, 60, 0.25);
-            background: rgba(231, 76, 60, 0.06);
+            color: #dc2626;
+            border-color: rgba(239,68,68,0.15);
+            background: rgba(239,68,68,0.04);
         }
 
         .node-seq-start .node-body {
             width: auto;
             height: auto;
-            padding: 14px 22px;
-            border-radius: 12px;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            border: 2px solid #533483;
-            color: #e0e0ff;
+            padding: 12px 22px;
+            border-radius: 24px;
+            background: rgba(124, 58, 237, 0.08);
+            border: 1px solid rgba(124, 58, 237, 0.2);
+            color: #2d2d3a;
             gap: 8px;
             flex-direction: row;
-            box-shadow: 0 4px 20px rgba(83, 52, 131, 0.25);
+            box-shadow: 0 2px 14px rgba(124, 58, 237, 0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.85);
         }
         .node-seq-start .node-body::before { display: none; }
         .node-seq-start:hover .node-body {
-            border-color: #7c5cbf;
-            box-shadow: 0 4px 30px rgba(83, 52, 131, 0.45);
-            transform: scale(1.05);
+            border-color: rgba(124, 58, 237, 0.35);
+            box-shadow: 0 4px 20px rgba(124, 58, 237, 0.12);
+            transform: scale(1.04);
         }
-        .node-seq-start .node-icon { width: 20px; height: 20px; color: #b8a0e0; }
+        .node-seq-start .node-icon { width: 18px; height: 18px; color: #7c3aed; }
         .node-seq-start .node-label {
-            color: #b8a0e0;
-            font-size: 0.7rem;
+            color: #6d28d9;
+            font-size: 0.62rem;
             letter-spacing: 1px;
             white-space: nowrap;
         }
@@ -238,35 +257,35 @@
         .node-seq-start .pulse-ring { display: none; }
 
         .node-seq-start.seq-running .node-body {
-            background: linear-gradient(135deg, #1b4332, #1a3a2a);
-            border-color: #27ae60;
-            box-shadow: 0 4px 25px rgba(39, 174, 96, 0.35),
-                        0 0 60px rgba(39, 174, 96, 0.1);
-            animation: seq-pulse-border 2s ease-in-out infinite;
+            background: rgba(34, 197, 94, 0.08);
+            border-color: rgba(34, 197, 94, 0.3);
+            box-shadow: 0 2px 18px rgba(34, 197, 94, 0.12),
+                        0 0 40px rgba(34, 197, 94, 0.04);
+            animation: seq-pulse-glow 2.5s ease-in-out infinite;
         }
-        .node-seq-start.seq-running .node-icon { color: #27ae60; }
-        .node-seq-start.seq-running .node-label { color: #6fcf97; }
+        .node-seq-start.seq-running .node-icon { color: #16a34a; }
+        .node-seq-start.seq-running .node-label { color: #15803d; }
 
-        @keyframes seq-pulse-border {
-            0%, 100% { box-shadow: 0 4px 25px rgba(39,174,96,0.35), 0 0 60px rgba(39,174,96,0.1); }
-            50%      { box-shadow: 0 4px 35px rgba(39,174,96,0.55), 0 0 80px rgba(39,174,96,0.2); }
+        @keyframes seq-pulse-glow {
+            0%, 100% { box-shadow: 0 2px 18px rgba(34,197,94,0.12), 0 0 40px rgba(34,197,94,0.04); }
+            50%      { box-shadow: 0 4px 24px rgba(34,197,94,0.2), 0 0 50px rgba(34,197,94,0.08); }
         }
 
         .pulse-ring {
             position: absolute;
-            width: 90px; height: 90px;
-            border-radius: 18px;
+            width: 80px; height: 80px;
+            border-radius: 22px;
             border: 1px solid transparent;
             top: 50%; left: 50%;
             transform: translate(-50%, -50%);
             pointer-events: none;
         }
         .node-active .pulse-ring {
-            border-color: rgba(39, 174, 96, 0.25);
+            border-color: rgba(34,197,94,0.2);
             animation: pulse-expand 3s ease-in-out infinite;
         }
         .node-configuring .pulse-ring {
-            border-color: rgba(243, 156, 18, 0.25);
+            border-color: rgba(234,179,8,0.2);
             animation: pulse-expand 2s ease-in-out infinite;
         }
 
@@ -277,43 +296,35 @@
         }
 
         .node:active .node-body {
-            transform: scale(0.9);
+            transform: scale(0.92);
             transition: transform 0.06s ease;
         }
 
         .node-click-flash {
             position: absolute;
             inset: 0;
-            border-radius: 18px;
+            border-radius: 22px;
             pointer-events: none;
             z-index: 10;
         }
         .node-click-flash .ring {
             position: absolute;
             inset: -4px;
-            border-radius: 20px;
-            border: 3px solid rgba(80, 120, 255, 0.8);
+            border-radius: 24px;
+            border: 2px solid rgba(100, 140, 255, 0.6);
             opacity: 0;
         }
         .node-click-flash .burst {
             position: absolute;
             inset: 0;
-            border-radius: 18px;
-            background: rgba(80, 120, 255, 0.35);
+            border-radius: 22px;
+            background: rgba(100, 140, 255, 0.25);
             opacity: 0;
         }
-        .node-click-flash.animate .ring {
-            animation: click-ring 0.6s ease-out forwards;
-        }
-        .node-click-flash.animate .burst {
-            animation: click-burst 0.35s ease-out forwards;
-        }
-        .node-click-flash.animate .ring:nth-child(2) {
-            animation-delay: 0.08s;
-        }
-        .node-click-flash.animate .ring:nth-child(3) {
-            animation-delay: 0.16s;
-        }
+        .node-click-flash.animate .ring { animation: click-ring 0.6s ease-out forwards; }
+        .node-click-flash.animate .burst { animation: click-burst 0.35s ease-out forwards; }
+        .node-click-flash.animate .ring:nth-child(2) { animation-delay: 0.08s; }
+        .node-click-flash.animate .ring:nth-child(3) { animation-delay: 0.16s; }
 
         @keyframes click-ring {
             0%   { opacity: 1; transform: scale(1); }
@@ -321,19 +332,8 @@
         }
         @keyframes click-burst {
             0%   { opacity: 1; transform: scale(1); }
-            50%  { opacity: 0.6; transform: scale(1.05); }
+            50%  { opacity: 0.5; transform: scale(1.04); }
             100% { opacity: 0; transform: scale(1); }
-        }
-
-        .grid-bg {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            z-index: 0;
-            background-image:
-                radial-gradient(circle at 1px 1px, #dcdce4 1px, transparent 0);
-            background-size: 36px 36px;
-            opacity: 0.6;
         }
 
         #no-data {
@@ -342,27 +342,29 @@
             transform: translate(-50%, -50%);
             z-index: 5;
             text-align: center;
-            color: #999;
-            font-size: 0.9rem;
+            color: #aaa;
+            font-size: 0.85rem;
             letter-spacing: 1px;
         }
 
         .seq-banner {
             position: fixed;
-            top: 55px; left: 0; right: 0;
+            top: 52px; left: 0; right: 0;
             z-index: 9;
             text-align: center;
             padding: 8px 0;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             font-weight: 700;
             letter-spacing: 2px;
             text-transform: uppercase;
-            color: #b8a0e0;
-            background: linear-gradient(90deg, rgba(83,52,131,0.12), rgba(83,52,131,0.2), rgba(83,52,131,0.12));
-            border-bottom: 1px solid rgba(83,52,131,0.25);
+            color: #7c3aed;
+            background: rgba(124, 58, 237, 0.07);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(124, 58, 237, 0.12);
             transform: translateY(-100%);
             opacity: 0;
-            transition: transform 0.4s ease, opacity 0.4s ease;
+            transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.4s ease;
             pointer-events: none;
         }
         .seq-banner.visible {
@@ -372,41 +374,61 @@
 
         #map-panel {
             position: fixed;
-            bottom: 20px;
-            left: 20px;
-            width: 260px;
-            height: 260px;
-            border-radius: 16px;
-            background: rgba(255,255,255,0.92);
-            border: 1.5px solid #d4d5dc;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            bottom: 16px;
+            left: 16px;
+            width: min(280px, 40vw);
+            height: min(280px, 40vw);
+            border-radius: 18px;
+            background: rgba(255,255,255,0.7);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.07),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
             z-index: 6;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
             opacity: 0;
-            transition: opacity 0.5s ease, width 0.35s ease, height 0.35s ease,
-                        top 0.35s ease, left 0.35s ease, right 0.35s ease, bottom 0.35s ease,
-                        border-radius 0.35s ease;
+            transform: scale(0.92);
+            transform-origin: bottom left;
+            transition: opacity 0.4s ease,
+                        transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1),
+                        border-radius 0.35s ease,
+                        box-shadow 0.4s ease;
             pointer-events: none;
         }
         #map-panel.visible {
             opacity: 1;
+            transform: scale(1);
             pointer-events: auto;
         }
+        #map-panel.expanding {
+            transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                        top 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                        left 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                        width 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                        height 0.5s cubic-bezier(0.22, 1, 0.36, 1),
+                        border-radius 0.5s ease,
+                        box-shadow 0.5s ease;
+        }
         #map-panel.expanded {
-            top: 60px; left: 20px; right: 20px; bottom: 20px;
-            width: auto; height: auto;
+            bottom: 100px; left: 100px;
+            width: calc(100vw - 200px);
+            height: calc(100vh - 200px);
             border-radius: 20px;
             z-index: 100;
-            border-color: #b8b8c8;
-            box-shadow: 0 10px 50px rgba(0,0,0,0.2);
+            border-color: rgba(0,0,0,0.08);
+            box-shadow: 0 12px 48px rgba(0,0,0,0.12),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
+            transform: scale(1);
         }
         #map-backdrop {
             position: fixed;
             inset: 0;
-            background: rgba(0,0,0,0.25);
+            background: rgba(0,0,0,0.18);
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
             z-index: 99;
             opacity: 0;
             pointer-events: none;
@@ -418,9 +440,9 @@
         }
         #map-panel .map-header {
             padding: 10px 14px 6px;
-            font-size: 0.6rem;
+            font-size: 0.52rem;
             font-weight: 700;
-            letter-spacing: 1.5px;
+            letter-spacing: 2px;
             text-transform: uppercase;
             color: #8888a0;
             display: flex;
@@ -428,9 +450,9 @@
             align-items: center;
         }
         .map-expand-btn {
-            background: none;
-            border: 1.5px solid #d4d5dc;
-            border-radius: 6px;
+            background: rgba(0,0,0,0.03);
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 7px;
             width: 26px;
             height: 26px;
             display: flex;
@@ -441,13 +463,13 @@
             transition: all 0.2s ease;
         }
         .map-expand-btn:hover {
-            border-color: #8888a0;
+            border-color: rgba(0,0,0,0.15);
             color: #555;
-            background: rgba(0,0,0,0.03);
+            background: rgba(0,0,0,0.05);
         }
         .map-expand-btn svg {
-            width: 14px;
-            height: 14px;
+            width: 13px;
+            height: 13px;
         }
         #map-panel .map-body {
             flex: 1;
@@ -458,6 +480,7 @@
             position: absolute;
             top: 0; left: 0;
             image-rendering: auto;
+            cursor: crosshair;
         }
         #map-panel .map-placeholder {
             position: absolute;
@@ -469,19 +492,25 @@
             align-items: center;
             justify-content: center;
             gap: 6px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: #aaa;
             letter-spacing: 0.5px;
-            background: rgba(255,255,255,0.5);
             transition: opacity 0.4s ease;
         }
         #map-panel .map-placeholder .map-status {
-            font-size: 0.6rem;
+            font-size: 0.55rem;
             color: #ccc;
         }
         #map-panel .map-placeholder.hidden {
             opacity: 0;
             pointer-events: none;
+        }
+
+        @media (max-width: 600px) {
+            .node-body { width: 64px; height: 64px; border-radius: 18px; }
+            .node-label { font-size: 0.5rem; max-width: 80px; }
+            .pulse-ring { width: 64px; height: 64px; border-radius: 18px; }
+            #map-panel { width: min(220px, 50vw); height: min(220px, 50vw); }
         }
     </style>
 </head>
@@ -493,7 +522,7 @@
     <h1>Node Status Graph</h1>
     <div class="ws-status">
         <span id="ws-dot" class="ws-dot ws-disconnected"></span>
-        <span id="ws-text" style="color: #e74c3c;">CONNECTING...</span>
+        <span id="ws-text" style="color: #dc2626;">CONNECTING...</span>
     </div>
 </div>
 
@@ -531,19 +560,19 @@
     ros.on('connection', () => {
         wsDot.className = 'ws-dot ws-connected';
         wsText.textContent = 'CONNECTED';
-        wsText.style.color = '#27ae60';
+        wsText.style.color = '#16a34a';
         mapStatus.textContent = 'connected, waiting for /map...';
     });
     ros.on('error', () => {
         wsDot.className = 'ws-dot ws-disconnected';
         wsText.textContent = 'ERROR';
-        wsText.style.color = '#e74c3c';
+        wsText.style.color = '#dc2626';
         mapStatus.textContent = 'rosbridge error';
     });
     ros.on('close', () => {
         wsDot.className = 'ws-dot ws-disconnected';
         wsText.textContent = 'DISCONNECTED';
-        wsText.style.color = '#e74c3c';
+        wsText.style.color = '#dc2626';
         mapStatus.textContent = 'disconnected';
     });
 
@@ -650,11 +679,11 @@
         let svgContent = `<defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#999ab0"/>
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#c0c0d0"/>
             </marker>
             <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#27ae60"/>
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#22c55e"/>
             </marker>
             <filter id="glow">
                 <feGaussianBlur stdDeviation="2" result="blur"/>
@@ -678,15 +707,15 @@
             const gw = maxX - minX;
             const gh = maxY - minY;
             const seqActive = isSequentialMode;
-            const boxStroke = seqActive ? 'rgba(83, 52, 131, 0.6)' : 'rgba(83, 52, 131, 0.2)';
-            const boxFill = seqActive ? 'rgba(83, 52, 131, 0.06)' : 'rgba(83, 52, 131, 0.02)';
+            const boxStroke = seqActive ? 'rgba(124, 58, 237, 0.45)' : 'rgba(124, 58, 237, 0.12)';
+            const boxFill = seqActive ? 'rgba(124, 58, 237, 0.04)' : 'rgba(124, 58, 237, 0.01)';
             const boxFilter = seqActive ? 'filter="url(#seq-glow)"' : '';
             const dashArray = seqActive ? '' : 'stroke-dasharray="6 4"';
             svgContent += `<rect x="${minX}" y="${minY}" width="${gw}" height="${gh}"
                 rx="16" ry="16" fill="${boxFill}" stroke="${boxStroke}" stroke-width="1.5"
                 ${dashArray} ${boxFilter}/>`;
             svgContent += `<text x="${minX + 12}" y="${minY + 18}"
-                font-size="10" font-weight="600" fill="rgba(83,52,131,0.5)"
+                font-size="10" font-weight="600" fill="rgba(124,58,237,0.4)"
                 letter-spacing="1.5" font-family="system-ui">SLAM &amp; CONTROL</text>`;
         }
 
@@ -704,15 +733,15 @@
             const isActive = stateFrom.includes('active') && stateTo.includes('active');
             const isConfiguring = stateFrom.includes('configur') && stateTo.includes('configur');
 
-            let strokeColor = '#c8c8d8';
+            let strokeColor = '#d0d0dc';
             let markerRef = 'url(#arrow)';
             let strokeW = 1.5;
             if (isActive) {
-                strokeColor = 'rgba(39, 174, 96, 0.45)';
+                strokeColor = 'rgba(34, 197, 94, 0.4)';
                 markerRef = 'url(#arrow-active)';
                 strokeW = 2;
             } else if (isConfiguring) {
-                strokeColor = 'rgba(243, 156, 18, 0.3)';
+                strokeColor = 'rgba(234, 179, 8, 0.3)';
                 strokeW = 1.8;
             }
 
@@ -1060,14 +1089,14 @@
                 const py = (h - 1 - gy) * w + gx;
                 const p = py * 4;
                 if (val === -1) {
-                    pixels[p]     = 180;
-                    pixels[p + 1] = 182;
-                    pixels[p + 2] = 190;
-                    pixels[p + 3] = 255;
+                    pixels[p]     = 0;
+                    pixels[p + 1] = 0;
+                    pixels[p + 2] = 0;
+                    pixels[p + 3] = 0;
                 } else if (val === 0) {
-                    pixels[p]     = 255;
-                    pixels[p + 1] = 255;
-                    pixels[p + 2] = 255;
+                    pixels[p]     = 215;
+                    pixels[p + 1] = 230;
+                    pixels[p + 2] = 245;
                     pixels[p + 3] = 255;
                 } else {
                     const t = Math.min(val / 100, 1);
@@ -1190,14 +1219,103 @@
         drawMap();
     });
 
+    function pixelToWorld(px, py) {
+        if (!mapInfo || !mapTransform) return null;
+        const res = mapInfo.resolution;
+        const ox = mapInfo.origin.position.x;
+        const oy = mapInfo.origin.position.y;
+        const gw = mapInfo.width;
+        const gh = mapInfo.height;
+        const ori = mapInfo.origin.orientation;
+
+        const gridX = (px - mapTransform.offsetX) / mapTransform.scale;
+        const gridY = gh - 1 - (py - mapTransform.offsetY) / mapTransform.scale;
+
+        let wx = ox + gridX * res;
+        let wy = oy + gridY * res;
+
+        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
+            const yaw = 2 * Math.atan2(ori.z, ori.w);
+            const c = Math.cos(yaw), s = Math.sin(yaw);
+            const rdx = gridX * res;
+            const rdy = gridY * res;
+            wx = ox + c * rdx - s * rdy;
+            wy = oy + s * rdx + c * rdy;
+        }
+
+        return { x: wx, y: wy };
+    }
+
+    const goalPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/goal_pose',
+        messageType: 'geometry_msgs/msg/PoseStamped'
+    });
+
+    mapCanvas.addEventListener('click', function(e) {
+        if (!mapInfo || !mapTransform) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const bodyRect = document.querySelector('#map-panel .map-body').getBoundingClientRect();
+        const px = (e.clientX - bodyRect.left) * dpr;
+        const py = (e.clientY - bodyRect.top) * dpr;
+
+        const world = pixelToWorld(px, py);
+        if (!world) return;
+
+        const goalMsg = new ROSLIB.Message({
+            header: {
+                stamp: { sec: 0, nanosec: 0 },
+                frame_id: 'map'
+            },
+            pose: {
+                position: { x: world.x, y: world.y, z: 0.0 },
+                orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+            }
+        });
+        goalPublisher.publish(goalMsg);
+    });
+
     const mapExpandBtn = document.getElementById('map-expand-btn');
     const mapBackdrop = document.getElementById('map-backdrop');
     let mapExpanded = false;
 
     function toggleMapExpand() {
         mapExpanded = !mapExpanded;
-        mapPanel.classList.toggle('expanded', mapExpanded);
-        mapBackdrop.classList.toggle('visible', mapExpanded);
+        mapPanel.classList.add('expanding');
+
+        if (mapExpanded) {
+            const rect = mapPanel.getBoundingClientRect();
+            const targetW = window.innerWidth - 32;
+            const targetH = window.innerHeight - 32;
+            const ratio = Math.min(rect.width / targetW, rect.height / targetH);
+
+            mapPanel.classList.add('expanded');
+            mapPanel.style.transform = `scale(${ratio})`;
+            mapBackdrop.classList.add('visible');
+
+            void mapPanel.offsetHeight;
+            mapPanel.style.transform = '';
+        } else {
+            const rect = mapPanel.getBoundingClientRect();
+            const smallW = Math.min(280, window.innerWidth * 0.4);
+            const smallH = Math.min(280, window.innerHeight * 0.4);
+            const ratio = Math.min(smallW / rect.width, smallH / rect.height);
+
+            mapPanel.style.transformOrigin = 'bottom left';
+            mapPanel.style.transform = `scale(${ratio})`;
+            mapBackdrop.classList.remove('visible');
+
+            const onEnd = () => {
+                mapPanel.classList.remove('expanded', 'expanding');
+                mapPanel.style.transform = '';
+                mapPanel.style.transformOrigin = '';
+                mapPanel.removeEventListener('transitionend', onEnd);
+                drawMap();
+            };
+            mapPanel.addEventListener('transitionend', onEnd);
+        }
+
         mapExpandBtn.innerHTML = mapExpanded
             ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                  <polyline points="4 14 10 14 10 20"/>
@@ -1211,7 +1329,8 @@
                  <line x1="21" y1="3" x2="14" y2="10"/>
                  <line x1="3" y1="21" x2="10" y2="14"/>
                </svg>`;
-        setTimeout(drawMap, 380);
+
+        if (mapExpanded) setTimeout(drawMap, 520);
     }
 
     mapExpandBtn.addEventListener('click', (e) => {
