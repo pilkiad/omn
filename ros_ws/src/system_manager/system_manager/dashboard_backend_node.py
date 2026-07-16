@@ -16,7 +16,7 @@ from ament_index_python.packages import get_package_share_directory, PackageNotF
 class DashboardBackendNode(Node):
     def __init__(self):
         super().__init__('dashboard_backend_node')
-        
+
         # 1. SUBSCRIBER FÜR DASHBOARD-METRIKEN
         self.metrics_sub = self.create_subscription(
             String,
@@ -24,7 +24,7 @@ class DashboardBackendNode(Node):
             self.slam_confidence_callback,
             10
         )
-        
+
         # 2. SUBSCRIBER FÜR STEUERUNGSBEFEHLE AUS DEM WEBINTERFACE
         self.cmd_sub = self.create_subscription(
             String,
@@ -32,7 +32,7 @@ class DashboardBackendNode(Node):
             self.command_callback,
             10
         )
-        
+
         # 3. PUBLISHER FÜR DEN AKTUELLEN LAUNCH-STATUS DER BUTTONS
         self.button_status_pub = self.create_publisher(
             String,
@@ -46,7 +46,7 @@ class DashboardBackendNode(Node):
             '/web_interface/node_states',
             10
         )
-        
+
         # --- LIFECYCLE MANAGEMENT KONFIGURATION ---
         # HIER triffst du die Auswahl, welche Knoten überwacht werden sollen.
         # Passe die Namen exakt so an, wie sie in deinem System heißen.
@@ -60,26 +60,26 @@ class DashboardBackendNode(Node):
         ]
         self.node_states = {node: "OFFLINE" for node in self.lifecycle_nodes}
         self.state_clients = {}
-        
+
         # Erstelle für jeden Knoten einen eigenen asynchronen Service-Client
         for node_name in self.lifecycle_nodes:
             cli = self.create_client(GetState, f'/{node_name}/get_state')
             self.state_clients[node_name] = cli
-            
+
         # Timer: Prüft alle 2.0 Sekunden asynchron den Status der Lifecycle Nodes
         self.lifecycle_timer = self.create_timer(2.0, self.check_lifecycle_states)
-        
+
         # Dictionary für aktive Prozesse und Lock
         self.active_processes = {}
         self.process_lock = threading.Lock()
-        
+
         # --- STATE MACHINE FÜR DEN SEQUENTIELLEN START ---
         self.sequential_active = False
         self.sequential_stage = 0  # 0=Aus, 1=Blind Exploration, 2=Intelligent Exploration
-        
+
         # Timer: Prüft alle 0.5 Sekunden den Status der Prozesse
         self.status_timer = self.create_timer(0.5, self.publish_button_states)
-        
+
         # Willkommens-Banner ausgeben
         self.print_welcome_banner()
 
@@ -93,7 +93,7 @@ class DashboardBackendNode(Node):
                 future.add_done_callback(lambda f, n=node_name: self.lifecycle_state_cb(f, n))
             else:
                 self.node_states[node_name] = "OFFLINE"
-                
+
         # Publizieren des aktuellen Dictionaries an das Webinterface
         msg = String()
         msg.data = json.dumps(self.node_states)
@@ -116,7 +116,7 @@ class DashboardBackendNode(Node):
             pkg_share = get_package_share_directory(package_name)
             path_option_1 = os.path.join(pkg_share, 'www', 'index.html')
             path_option_2 = os.path.join(pkg_share, 'index.html')
-            
+
             if os.path.exists(path_option_1):
                 html_url = f"file://{os.path.abspath(path_option_1)}"
             elif os.path.exists(path_option_2):
@@ -148,14 +148,14 @@ class DashboardBackendNode(Node):
             "follow_red": False,
             "sequential_start": self.sequential_active
         }
-        
+
         with self.process_lock:
             # Prüfe normale Prozesse
             for key in ["slam", "blind_exploration", "exploration", "navigation", "follow_red"]:
                 if key in self.active_processes:
                     if self.active_processes[key].poll() is None:
                         states[key] = True
-                        
+
         msg = String()
         msg.data = json.dumps(states)
         self.button_status_pub.publish(msg)
@@ -165,19 +165,19 @@ class DashboardBackendNode(Node):
         try:
             raw_data = msg.data
             parsed_json = json.loads(raw_data)
-            
+
             confidence = parsed_json.get("confidence", 0.0)
             frontier_ratio = parsed_json.get("frontier_ratio", 0.0)
             unknown_ratio = parsed_json.get("unknown_ratio", 0.0)
             growth_ratio = parsed_json.get("growth_ratio", 0.0)
-            
+
             if self.sequential_active and self.sequential_stage == 1:
                 if confidence >= 0.30:
                     self.get_logger().info("\n" + "🌟"*20)
                     self.get_logger().info(f"🎯 ZIEL ERREICHT! Confidence liegt bei {confidence*100:.1f}%.")
                     self.get_logger().info("🔄 SCHALTE UM: Von [Blind Exploration] auf [Intelligent Exploration]!")
                     self.get_logger().info("🌟"*20 + "\n")
-                    
+
                     self.sequential_stage = 2
                     self.ensure_node_is_killed("blind_exploration")
                     self.toggle_node("exploration", ["ros2", "launch", "exploration", "exploration.launch.py"])
@@ -196,9 +196,9 @@ class DashboardBackendNode(Node):
             command_data = json.loads(msg.data)
             action = command_data.get("action")
             target = command_data.get("target")
-            
+
             self.get_logger().info(f"Befehl erhalten -> Action: {action} | Target: {target}")
-            
+
             if action == "launch":
                 if target not in ["sequential_start", "slam"] and self.sequential_active:
                     self.get_logger().warn("⚠️ Manueller Eingriff! Sequentieller Automatik-Modus wird beendet.")
@@ -216,45 +216,44 @@ class DashboardBackendNode(Node):
                         self.get_logger().info("⚡ SEQUENTIELLER MODUS GESTARTET! (Erwartet, dass SLAM bereits laeuft)")
                         self.sequential_active = True
                         self.sequential_stage = 1
-                        
+
                         self.ensure_node_is_killed("blind_exploration")
                         self.ensure_node_is_killed("exploration")
                         self.ensure_node_is_killed("navigation")
                         self.ensure_node_is_killed("follow_red")
-                        
+
                         self.get_logger().info("🚀 PHASE 1: Starte NUR [Blind Exploration]...")
                         self.toggle_node("blind_exploration", ["ros2", "launch", "exploration", "blind_exploration.launch.py"])
 
                 elif target == "slam":
                     self.toggle_node("slam", ["ros2", "launch", "slam", "slam_mapping.launch.py"])
-                
+
                 elif target == "blind_exploration":
                     self.ensure_node_is_killed("exploration")
                     self.ensure_node_is_killed("navigation")
                     self.ensure_node_is_killed("follow_red")
                     self.toggle_node("blind_exploration", ["ros2", "launch", "exploration", "blind_exploration.launch.py"])
-                
+
                 elif target == "exploration":
                     self.ensure_node_is_killed("blind_exploration")
-                    self.ensure_node_is_killed("navigation")
                     self.ensure_node_is_killed("follow_red")
                     self.toggle_node("exploration", ["ros2", "launch", "exploration", "exploration.launch.py"])
-                
+
                 elif target == "navigation":
                     self.ensure_node_is_killed("blind_exploration")
                     self.ensure_node_is_killed("exploration")
                     self.ensure_node_is_killed("follow_red")
                     self.toggle_node("navigation", ["ros2", "launch", "navigation", "navigation.launch.py"])
-                
+
                 elif target == "follow_red":
                     self.ensure_node_is_killed("blind_exploration")
                     self.ensure_node_is_killed("exploration")
                     self.ensure_node_is_killed("navigation")
                     self.toggle_node("follow_red", ["ros2", "launch", "follow_red", "follow_red_with_avoidance.launch.py"])
-                    
+
                 else:
                     self.get_logger().warn(f"Unbekanntes Launch-Ziel: {target}")
-                    
+
         except json.JSONDecodeError as e:
             self.get_logger().error(f"Fehler beim Parsen des Befehls-JSON: {e}")
 
@@ -264,12 +263,12 @@ class DashboardBackendNode(Node):
             pgid = os.getpgid(proc.pid)
             self.get_logger().info(f"Sende SIGTERM an Prozessgruppe PGID: {pgid}")
             os.killpg(pgid, signal.SIGTERM)
-            
+
             for _ in range(10):
                 if proc.poll() is not None:
                     return True
                 time.sleep(0.2)
-                
+
             self.get_logger().warn(f"Prozessgruppe {pgid} reagiert nicht. Erzwinge SIGKILL...")
             os.killpg(pgid, signal.SIGKILL)
             proc.wait()

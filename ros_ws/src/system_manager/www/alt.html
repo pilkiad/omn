@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Node Status Graph</title>
+    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: #f0f1f4;
+            color: #2d2d3a;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #header {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 10;
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(240, 241, 244, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid #d8d9de;
+        }
+
+        #header h1 {
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: #6b6b80;
+            text-transform: uppercase;
+        }
+
+        .ws-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+
+        .ws-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+        .ws-connected { background: #27ae60; box-shadow: 0 0 8px rgba(39,174,96,0.5); }
+        .ws-disconnected { background: #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,0.4); }
+
+        #graph-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        #graph-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 2;
+        }
+
+        .node {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            transform: translate(-50%, -50%);
+            transition: left 0.8s cubic-bezier(0.23, 1, 0.32, 1),
+                        top 0.8s cubic-bezier(0.23, 1, 0.32, 1),
+                        opacity 0.4s ease;
+            cursor: pointer;
+            z-index: 3;
+        }
+
+        .node:hover .node-body {
+            transform: scale(1.08);
+            border-color: #a0a0b8;
+        }
+
+        .node-body {
+            width: 90px;
+            height: 90px;
+            border-radius: 18px;
+            background: #ffffff;
+            border: 2px solid #d4d5dc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.5s ease;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        }
+
+        .node-body::before {
+            content: '';
+            position: absolute;
+            inset: -3px;
+            border-radius: 20px;
+            background: conic-gradient(from 0deg, transparent, transparent);
+            z-index: -1;
+            transition: background 0.5s ease;
+            opacity: 0.5;
+        }
+
+        .node-active .node-body {
+            border-color: #27ae60;
+            box-shadow: 0 0 20px rgba(39, 174, 96, 0.12),
+                        0 2px 12px rgba(0,0,0,0.04);
+        }
+        .node-active .node-body::before {
+            background: conic-gradient(from 0deg, #27ae60, transparent, transparent, #27ae60);
+        }
+
+        .node-configuring .node-body {
+            border-color: #f39c12;
+            box-shadow: 0 0 20px rgba(243, 156, 18, 0.1),
+                        0 2px 12px rgba(0,0,0,0.04);
+        }
+        .node-configuring .node-body::before {
+            background: conic-gradient(from 0deg, #f39c12, transparent, transparent, #f39c12);
+        }
+
+        .node-unconfigured .node-body {
+            border-color: #e74c3c;
+            box-shadow: 0 0 16px rgba(231, 76, 60, 0.08),
+                        0 2px 12px rgba(0,0,0,0.04);
+        }
+        .node-unconfigured .node-body::before {
+            background: conic-gradient(from 0deg, #e74c3c, transparent, transparent, #e74c3c);
+        }
+
+        .node-icon {
+            width: 32px; height: 32px;
+            color: #8888a0;
+            transition: color 0.5s ease;
+        }
+        .node-active .node-icon { color: #27ae60; }
+        .node-configuring .node-icon { color: #f39c12; }
+        .node-unconfigured .node-icon { color: #e74c3c; }
+
+        .led-core {
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            transition: all 0.5s ease;
+        }
+        .node-active .led-core {
+            background: #27ae60;
+            box-shadow: 0 0 10px #27ae60, 0 0 25px rgba(39, 174, 96, 0.35);
+        }
+        .node-configuring .led-core {
+            background: #f39c12;
+            box-shadow: 0 0 10px #f39c12, 0 0 25px rgba(243, 156, 18, 0.35);
+        }
+        .node-unconfigured .led-core {
+            background: #e74c3c;
+            box-shadow: 0 0 10px #e74c3c, 0 0 25px rgba(231, 76, 60, 0.35);
+        }
+
+        .node-label {
+            font-size: 0.65rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-align: center;
+            max-width: 110px;
+            word-wrap: break-word;
+            line-height: 1.3;
+            color: #8888a0;
+            transition: color 0.3s;
+        }
+        .node-active .node-label { color: #1e8449; }
+        .node-configuring .node-label { color: #b8860b; }
+        .node-unconfigured .node-label { color: #c0392b; }
+
+        .node-state-badge {
+            font-size: 0.55rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.03);
+            border: 1px solid rgba(0,0,0,0.06);
+            transition: all 0.3s;
+        }
+        .node-active .node-state-badge {
+            color: #27ae60;
+            border-color: rgba(39, 174, 96, 0.25);
+            background: rgba(39, 174, 96, 0.06);
+        }
+        .node-configuring .node-state-badge {
+            color: #f39c12;
+            border-color: rgba(243, 156, 18, 0.25);
+            background: rgba(243, 156, 18, 0.06);
+        }
+        .node-unconfigured .node-state-badge {
+            color: #e74c3c;
+            border-color: rgba(231, 76, 60, 0.25);
+            background: rgba(231, 76, 60, 0.06);
+        }
+
+        .node-seq-start .node-body {
+            width: auto;
+            height: auto;
+            padding: 14px 22px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 2px solid #533483;
+            color: #e0e0ff;
+            gap: 8px;
+            flex-direction: row;
+            box-shadow: 0 4px 20px rgba(83, 52, 131, 0.25);
+        }
+        .node-seq-start .node-body::before { display: none; }
+        .node-seq-start:hover .node-body {
+            border-color: #7c5cbf;
+            box-shadow: 0 4px 30px rgba(83, 52, 131, 0.45);
+            transform: scale(1.05);
+        }
+        .node-seq-start .node-icon { width: 20px; height: 20px; color: #b8a0e0; }
+        .node-seq-start .node-label {
+            color: #b8a0e0;
+            font-size: 0.7rem;
+            letter-spacing: 1px;
+            white-space: nowrap;
+        }
+        .node-seq-start .node-state-badge { display: none; }
+        .node-seq-start .pulse-ring { display: none; }
+
+        .node-seq-start.seq-running .node-body {
+            background: linear-gradient(135deg, #1b4332, #1a3a2a);
+            border-color: #27ae60;
+            box-shadow: 0 4px 25px rgba(39, 174, 96, 0.35),
+                        0 0 60px rgba(39, 174, 96, 0.1);
+            animation: seq-pulse-border 2s ease-in-out infinite;
+        }
+        .node-seq-start.seq-running .node-icon { color: #27ae60; }
+        .node-seq-start.seq-running .node-label { color: #6fcf97; }
+
+        @keyframes seq-pulse-border {
+            0%, 100% { box-shadow: 0 4px 25px rgba(39,174,96,0.35), 0 0 60px rgba(39,174,96,0.1); }
+            50%      { box-shadow: 0 4px 35px rgba(39,174,96,0.55), 0 0 80px rgba(39,174,96,0.2); }
+        }
+
+        .pulse-ring {
+            position: absolute;
+            width: 90px; height: 90px;
+            border-radius: 18px;
+            border: 1px solid transparent;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        .node-active .pulse-ring {
+            border-color: rgba(39, 174, 96, 0.25);
+            animation: pulse-expand 3s ease-in-out infinite;
+        }
+        .node-configuring .pulse-ring {
+            border-color: rgba(243, 156, 18, 0.25);
+            animation: pulse-expand 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-expand {
+            0% { transform: translate(-50%, -50%) scale(1); opacity: 0.6; }
+            50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0; }
+            100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+        }
+
+        .node:active .node-body {
+            transform: scale(0.9);
+            transition: transform 0.06s ease;
+        }
+
+        .node-click-flash {
+            position: absolute;
+            inset: 0;
+            border-radius: 18px;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .node-click-flash .ring {
+            position: absolute;
+            inset: -4px;
+            border-radius: 20px;
+            border: 3px solid rgba(80, 120, 255, 0.8);
+            opacity: 0;
+        }
+        .node-click-flash .burst {
+            position: absolute;
+            inset: 0;
+            border-radius: 18px;
+            background: rgba(80, 120, 255, 0.35);
+            opacity: 0;
+        }
+        .node-click-flash.animate .ring {
+            animation: click-ring 0.6s ease-out forwards;
+        }
+        .node-click-flash.animate .burst {
+            animation: click-burst 0.35s ease-out forwards;
+        }
+        .node-click-flash.animate .ring:nth-child(2) {
+            animation-delay: 0.08s;
+        }
+        .node-click-flash.animate .ring:nth-child(3) {
+            animation-delay: 0.16s;
+        }
+
+        @keyframes click-ring {
+            0%   { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(1.8); }
+        }
+        @keyframes click-burst {
+            0%   { opacity: 1; transform: scale(1); }
+            50%  { opacity: 0.6; transform: scale(1.05); }
+            100% { opacity: 0; transform: scale(1); }
+        }
+
+        .grid-bg {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 0;
+            background-image:
+                radial-gradient(circle at 1px 1px, #dcdce4 1px, transparent 0);
+            background-size: 36px 36px;
+            opacity: 0.6;
+        }
+
+        #no-data {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            text-align: center;
+            color: #999;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+        }
+
+        .seq-banner {
+            position: fixed;
+            top: 55px; left: 0; right: 0;
+            z-index: 9;
+            text-align: center;
+            padding: 8px 0;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #b8a0e0;
+            background: linear-gradient(90deg, rgba(83,52,131,0.12), rgba(83,52,131,0.2), rgba(83,52,131,0.12));
+            border-bottom: 1px solid rgba(83,52,131,0.25);
+            transform: translateY(-100%);
+            opacity: 0;
+            transition: transform 0.4s ease, opacity 0.4s ease;
+            pointer-events: none;
+        }
+        .seq-banner.visible {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        #map-panel {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 260px;
+            height: 260px;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.92);
+            border: 1.5px solid #d4d5dc;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            z-index: 6;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            transition: opacity 0.5s ease, width 0.35s ease, height 0.35s ease,
+                        top 0.35s ease, left 0.35s ease, right 0.35s ease, bottom 0.35s ease,
+                        border-radius 0.35s ease;
+            pointer-events: none;
+        }
+        #map-panel.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #map-panel.expanded {
+            top: 60px; left: 20px; right: 20px; bottom: 20px;
+            width: auto; height: auto;
+            border-radius: 20px;
+            z-index: 100;
+            border-color: #b8b8c8;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.2);
+        }
+        #map-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.25);
+            z-index: 99;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        #map-backdrop.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #map-panel .map-header {
+            padding: 10px 14px 6px;
+            font-size: 0.6rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: #8888a0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .map-expand-btn {
+            background: none;
+            border: 1.5px solid #d4d5dc;
+            border-radius: 6px;
+            width: 26px;
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #8888a0;
+            transition: all 0.2s ease;
+        }
+        .map-expand-btn:hover {
+            border-color: #8888a0;
+            color: #555;
+            background: rgba(0,0,0,0.03);
+        }
+        .map-expand-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+        #map-panel .map-body {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        #map-panel canvas {
+            position: absolute;
+            top: 0; left: 0;
+            image-rendering: auto;
+        }
+        #map-panel .map-placeholder {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            color: #aaa;
+            letter-spacing: 0.5px;
+            background: rgba(255,255,255,0.5);
+            transition: opacity 0.4s ease;
+        }
+        #map-panel .map-placeholder .map-status {
+            font-size: 0.6rem;
+            color: #ccc;
+        }
+        #map-panel .map-placeholder.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<div id="header">
+    <h1>Node Status Graph</h1>
+    <div class="ws-status">
+        <span id="ws-dot" class="ws-dot ws-disconnected"></span>
+        <span id="ws-text" style="color: #e74c3c;">CONNECTING...</span>
+    </div>
+</div>
+
+<svg id="graph-canvas"></svg>
+<div id="graph-container"></div>
+<div id="seq-banner" class="seq-banner">⚡ Sequential Mode Active — Nodes auto-managed</div>
+<div id="map-backdrop"></div>
+<div id="map-panel">
+    <div class="map-header">
+        SLAM Map
+        <button class="map-expand-btn" id="map-expand-btn" title="Expand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"/>
+                <polyline points="9 21 3 21 3 15"/>
+                <line x1="21" y1="3" x2="14" y2="10"/>
+                <line x1="3" y1="21" x2="10" y2="14"/>
+            </svg>
+        </button>
+    </div>
+    <div class="map-body">
+        <div class="map-placeholder" id="map-placeholder">
+            No map received
+            <div class="map-status" id="map-status">subscribing to /map...</div>
+        </div>
+        <canvas id="map-canvas"></canvas>
+    </div>
+</div>
+<div id="no-data">Waiting for node data...</div>
+
+<script>
+    const ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
+    const wsDot = document.getElementById('ws-dot');
+    const wsText = document.getElementById('ws-text');
+
+    ros.on('connection', () => {
+        wsDot.className = 'ws-dot ws-connected';
+        wsText.textContent = 'CONNECTED';
+        wsText.style.color = '#27ae60';
+        mapStatus.textContent = 'connected, waiting for /map...';
+    });
+    ros.on('error', () => {
+        wsDot.className = 'ws-dot ws-disconnected';
+        wsText.textContent = 'ERROR';
+        wsText.style.color = '#e74c3c';
+        mapStatus.textContent = 'rosbridge error';
+    });
+    ros.on('close', () => {
+        wsDot.className = 'ws-dot ws-disconnected';
+        wsText.textContent = 'DISCONNECTED';
+        wsText.style.color = '#e74c3c';
+        mapStatus.textContent = 'disconnected';
+    });
+
+    const container = document.getElementById('graph-container');
+    const svg = document.getElementById('graph-canvas');
+    const noData = document.getElementById('no-data');
+
+    let nodesData = {};
+    let nodeElements = {};
+    let isSequentialMode = false;
+
+    function getStateClass(state) {
+        const s = state.toLowerCase();
+        if (s.includes('active')) return 'node-active';
+        if (s.includes('configur')) return 'node-configuring';
+        return 'node-unconfigured';
+    }
+
+    function getShortName(name) {
+        let parts = name.split('/');
+        let last = parts[parts.length - 1] || parts[parts.length - 2];
+        return last.replace(/_/g, '\n');
+    }
+
+    const TOPOLOGY = {
+        'slam':                    { x: 0.14, y: 0.15 },
+        'sequential_start':        { x: 0.22, y: 0.15 },
+        'exploration':             { x: 0.35, y: 0.18 },
+        'follow_red':              { x: 0.62, y: 0.18 },
+        'navigation':              { x: 0.45, y: 0.48 },
+        'blind_exploration':       { x: 0.68, y: 0.48 },
+        'collision_avoidance':     { x: 0.52, y: 0.68 },
+        'motor':                   { x: 0.52, y: 0.88 },
+    };
+
+    const FAKE_NODES = {
+        'motor':           { deriveFrom: 'collision_avoidance' },
+        'sequential_start': { deriveFrom: null, alwaysState: 'ready' },
+    };
+
+    const EDGES = [
+        ['exploration', 'navigation'],
+        ['follow_red', 'navigation'],
+        ['navigation', 'collision_avoidance'],
+        ['blind_exploration', 'collision_avoidance'],
+        ['collision_avoidance', 'motor'],
+    ];
+
+    const TOPOLOGY_KEYS = Object.keys(TOPOLOGY).sort((a, b) => b.length - a.length);
+
+    function matchTopologyKey(nodeName) {
+        const lower = nodeName.toLowerCase();
+        for (const key of TOPOLOGY_KEYS) {
+            if (lower.includes(key)) return key;
+        }
+        return null;
+    }
+
+    function renderGraph() {
+        const realKeys = Object.keys(nodesData);
+        const fakeKeys = Object.keys(FAKE_NODES);
+        const allKeys = [...realKeys, ...fakeKeys.filter(k => !nodesData[k])];
+
+        if (realKeys.length === 0 && fakeKeys.length === 0) {
+            noData.style.display = 'block';
+            return;
+        }
+        noData.style.display = 'none';
+
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const topBar = 55;
+
+        const positions = {};
+        const unmatched = [];
+
+        for (const key of allKeys) {
+            const topoKey = matchTopologyKey(key);
+            if (topoKey && TOPOLOGY[topoKey]) {
+                const t = TOPOLOGY[topoKey];
+                positions[key] = {
+                    x: t.x * w,
+                    y: topBar + t.y * (h - topBar)
+                };
+            } else {
+                unmatched.push(key);
+            }
+        }
+
+        if (unmatched.length > 0) {
+            const startX = 0.15;
+            const spacing = 0.12;
+            unmatched.forEach((key, i) => {
+                positions[key] = {
+                    x: (startX + i * spacing) * w,
+                    y: 0.55 * h
+                };
+            });
+        }
+
+        const edgeMap = {};
+        for (const key of allKeys) edgeMap[key] = true;
+
+        let svgContent = `<defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#999ab0"/>
+            </marker>
+            <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 1 L 8 5 L 0 9 z" fill="#27ae60"/>
+            </marker>
+            <filter id="glow">
+                <feGaussianBlur stdDeviation="2" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="seq-glow">
+                <feGaussianBlur stdDeviation="6" result="blur"/>
+                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+        </defs>`;
+
+        const slamPos = positions[allKeys.find(k => matchTopologyKey(k) === 'slam')];
+        const seqPos = positions[allKeys.find(k => matchTopologyKey(k) === 'sequential_start')];
+        if (slamPos && seqPos) {
+            const padX = 70;
+            const padY = 100;
+            const minX = Math.min(slamPos.x, seqPos.x) - padX;
+            const maxX = Math.max(slamPos.x, seqPos.x) + padX;
+            const minY = Math.min(slamPos.y, seqPos.y) - padY;
+            const maxY = Math.max(slamPos.y, seqPos.y) + padY;
+            const gw = maxX - minX;
+            const gh = maxY - minY;
+            const seqActive = isSequentialMode;
+            const boxStroke = seqActive ? 'rgba(83, 52, 131, 0.6)' : 'rgba(83, 52, 131, 0.2)';
+            const boxFill = seqActive ? 'rgba(83, 52, 131, 0.06)' : 'rgba(83, 52, 131, 0.02)';
+            const boxFilter = seqActive ? 'filter="url(#seq-glow)"' : '';
+            const dashArray = seqActive ? '' : 'stroke-dasharray="6 4"';
+            svgContent += `<rect x="${minX}" y="${minY}" width="${gw}" height="${gh}"
+                rx="16" ry="16" fill="${boxFill}" stroke="${boxStroke}" stroke-width="1.5"
+                ${dashArray} ${boxFilter}/>`;
+            svgContent += `<text x="${minX + 12}" y="${minY + 18}"
+                font-size="10" font-weight="600" fill="rgba(83,52,131,0.5)"
+                letter-spacing="1.5" font-family="system-ui">SLAM &amp; CONTROL</text>`;
+        }
+
+        for (const [from, to] of EDGES) {
+            const fromKey = allKeys.find(k => matchTopologyKey(k) === from);
+            const toKey = allKeys.find(k => matchTopologyKey(k) === to);
+            if (!fromKey || !toKey) continue;
+            if (!positions[fromKey] || !positions[toKey]) continue;
+
+            const pa = positions[fromKey];
+            const pb = positions[toKey];
+
+            const stateFrom = FAKE_NODES[from]?.state || nodesData[fromKey]?.toLowerCase() || '';
+            const stateTo = FAKE_NODES[to]?.state || nodesData[toKey]?.toLowerCase() || '';
+            const isActive = stateFrom.includes('active') && stateTo.includes('active');
+            const isConfiguring = stateFrom.includes('configur') && stateTo.includes('configur');
+
+            let strokeColor = '#c8c8d8';
+            let markerRef = 'url(#arrow)';
+            let strokeW = 1.5;
+            if (isActive) {
+                strokeColor = 'rgba(39, 174, 96, 0.45)';
+                markerRef = 'url(#arrow-active)';
+                strokeW = 2;
+            } else if (isConfiguring) {
+                strokeColor = 'rgba(243, 156, 18, 0.3)';
+                strokeW = 1.8;
+            }
+
+            const dx = pb.x - pa.x;
+            const dy = pb.y - pa.y;
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const nx = dx / len;
+            const ny = dy / len;
+            const rStart = 48;
+            const rEnd = 78;
+            const x1 = pa.x + nx * rStart;
+            const y1 = pa.y + ny * rStart;
+            const x2 = pb.x - nx * rEnd;
+            const y2 = pb.y - ny * rEnd;
+
+            svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
+                stroke="${strokeColor}" stroke-width="${strokeW}"
+                marker-end="${markerRef}" filter="url(#glow)"
+                stroke-linecap="round"/>`;
+        }
+
+        svg.innerHTML = svgContent;
+
+        for (const key of allKeys) {
+            let state;
+            const fake = FAKE_NODES[key];
+            if (fake) {
+                if (fake.alwaysState) {
+                    state = fake.alwaysState;
+                } else if (fake.deriveFrom) {
+                    const deriveKey = allKeys.find(k => matchTopologyKey(k) === fake.deriveFrom);
+                    state = (deriveKey && nodesData[deriveKey]) ? nodesData[deriveKey] : 'unconfigured';
+                } else {
+                    state = 'unconfigured';
+                }
+            } else {
+                state = nodesData[key];
+            }
+            const stateClass = getStateClass(state);
+            const pos = positions[key];
+            if (!pos) continue;
+
+            if (nodeElements[key]) {
+                const el = nodeElements[key];
+                el.style.left = pos.x + 'px';
+                el.style.top = pos.y + 'px';
+                const isSeqEl = matchTopologyKey(key) === 'sequential_start';
+                el.className = `node ${isSeqEl ? 'node-seq-start' : stateClass}${isSeqEl && isSequentialMode ? ' seq-running' : ''}`;
+                if (!isSeqEl) el.querySelector('.node-state-badge').textContent = state.toUpperCase();
+            } else {
+                const topoKey = matchTopologyKey(key);
+                const isSlam = topoKey === 'slam';
+                const isMotor = topoKey === 'motor';
+                const isSeq = topoKey === 'sequential_start';
+                const icon = isSlam
+                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                         <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+                         <line x1="8" y1="2" x2="8" y2="18"/>
+                         <line x1="16" y1="6" x2="16" y2="22"/>
+                       </svg>`
+                    : isMotor
+                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                         <circle cx="12" cy="12" r="10"/>
+                         <circle cx="12" cy="12" r="3"/>
+                         <line x1="12" y1="2" x2="12" y2="5"/>
+                         <line x1="12" y1="19" x2="12" y2="22"/>
+                         <line x1="2" y1="12" x2="5" y2="12"/>
+                         <line x1="19" y1="12" x2="22" y2="12"/>
+                       </svg>`
+                    : isSeq
+                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                       </svg>`
+                    : `<div class="led-core"></div>`;
+
+                const el = document.createElement('div');
+                el.className = `node ${isSeq ? 'node-seq-start' : stateClass}${isSeq && isSequentialMode ? ' seq-running' : ''}`;
+                el.style.left = pos.x + 'px';
+                el.style.top = pos.y + 'px';
+                el.style.opacity = '0';
+                el.innerHTML = `
+                    <div class="node-body">
+                        <div class="node-click-flash">
+                            <div class="ring"></div>
+                            <div class="ring"></div>
+                            <div class="ring"></div>
+                            <div class="burst"></div>
+                        </div>
+                        <div class="pulse-ring"></div>
+                        ${icon}
+                    </div>
+                    <div class="node-label">${isSeq ? 'AUTO SEQUENTIAL' : getShortName(key)}</div>
+                    <div class="node-state-badge">${state.toUpperCase()}</div>
+                `;
+                if (topoKey) {
+                    el.addEventListener('click', () => {
+                        sendCommand('launch', topoKey);
+                        const flash = el.querySelector('.node-click-flash');
+                        flash.classList.remove('animate');
+                        void flash.offsetWidth;
+                        flash.classList.add('animate');
+                    });
+                }
+                container.appendChild(el);
+                nodeElements[key] = el;
+                requestAnimationFrame(() => { el.style.opacity = '1'; });
+            }
+        }
+
+        for (const key of Object.keys(nodeElements)) {
+            if (!allKeys.includes(key)) {
+                nodeElements[key].style.opacity = '0';
+                setTimeout(() => {
+                    nodeElements[key]?.remove();
+                    delete nodeElements[key];
+                }, 400);
+            }
+        }
+    }
+
+    const commandPublisher = new ROSLIB.Topic({
+        ros: ros,
+        name: '/web_interface/api_command',
+        messageType: 'std_msgs/msg/String'
+    });
+
+    function sendCommand(action, target, args = "") {
+        const payload = JSON.stringify({ action: action, target: target, args: args });
+        const message = new ROSLIB.Message({ data: payload });
+        commandPublisher.publish(message);
+        console.log("Command:", payload);
+    }
+
+    const nodeStateListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/web_interface/node_states',
+        messageType: 'std_msgs/msg/String'
+    });
+
+    nodeStateListener.subscribe(function(message) {
+        try {
+            const states = JSON.parse(message.data);
+            nodesData = states;
+            renderGraph();
+        } catch (e) {
+            console.error('Error parsing node states:', e);
+        }
+    });
+
+    const seqBanner = document.getElementById('seq-banner');
+
+    const buttonStateListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/web_interface/button_states',
+        messageType: 'std_msgs/msg/String'
+    });
+
+    buttonStateListener.subscribe(function(message) {
+        try {
+            const buttonStates = JSON.parse(message.data);
+            const wasSeq = isSequentialMode;
+            isSequentialMode = buttonStates.sequential_start === true;
+            if (wasSeq !== isSequentialMode) {
+                seqBanner.classList.toggle('visible', isSequentialMode);
+                renderGraph();
+            }
+        } catch (e) {
+            console.error('Error parsing button states:', e);
+        }
+    });
+
+    window.addEventListener('resize', renderGraph);
+
+    const mapPanel = document.getElementById('map-panel');
+    const mapCanvas = document.getElementById('map-canvas');
+    const mapPlaceholder = document.getElementById('map-placeholder');
+    const mapStatus = document.getElementById('map-status');
+    const mapCtx = mapCanvas.getContext('2d');
+
+    let mapInfo = null;
+    let mapImage = null;
+    let robotPose = null;
+    let plannedPath = null;
+    let goalPose = null;
+    let mapTransform = null;
+
+    function worldToPixel(wx, wy) {
+        if (!mapInfo || !mapTransform) return null;
+        const res = mapInfo.resolution;
+        const ox = mapInfo.origin.position.x;
+        const oy = mapInfo.origin.position.y;
+        const gw = mapInfo.width;
+        const gh = mapInfo.height;
+        const ori = mapInfo.origin.orientation;
+
+        let dx = wx - ox;
+        let dy = wy - oy;
+        let gridX, gridY;
+        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
+            const yaw = 2 * Math.atan2(ori.z, ori.w);
+            const c = Math.cos(yaw), s = Math.sin(yaw);
+            gridX = (c * dx + s * dy) / res;
+            gridY = (-s * dx + c * dy) / res;
+        } else {
+            gridX = dx / res;
+            gridY = dy / res;
+        }
+
+        return {
+            x: mapTransform.offsetX + gridX * mapTransform.scale,
+            y: mapTransform.offsetY + (gh - 1 - gridY) * mapTransform.scale
+        };
+    }
+
+    function drawMap() {
+        if (!mapImage || !mapInfo) return;
+
+        const body = document.querySelector('#map-panel .map-body');
+        const rect = body.getBoundingClientRect();
+        const cw = rect.width;
+        const ch = rect.height;
+        if (cw === 0 || ch === 0) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        const bufW = Math.round(cw * dpr);
+        const bufH = Math.round(ch * dpr);
+        mapCanvas.width = bufW;
+        mapCanvas.height = bufH;
+        mapCanvas.style.width = cw + 'px';
+        mapCanvas.style.height = ch + 'px';
+
+        const gw = mapInfo.width;
+        const gh = mapInfo.height;
+        const scale = Math.min(bufW / gw, bufH / gh);
+        const offsetX = (bufW - gw * scale) / 2;
+        const offsetY = (bufH - gh * scale) / 2;
+        mapTransform = { scale, offsetX, offsetY };
+
+        mapCtx.clearRect(0, 0, bufW, bufH);
+        mapCtx.imageSmoothingEnabled = true;
+        mapCtx.imageSmoothingQuality = 'high';
+        mapCtx.drawImage(mapImage, offsetX, offsetY, gw * scale, gh * scale);
+
+        if (goalPose) {
+            const p = worldToPixel(goalPose.x, goalPose.y);
+            if (p) {
+                const gyaw = 2 * Math.atan2(goalPose.qz, goalPose.qw);
+                mapCtx.save();
+                mapCtx.translate(p.x, p.y);
+                mapCtx.rotate(-gyaw);
+                const s = Math.max(6, scale * 0.12);
+                mapCtx.beginPath();
+                mapCtx.arc(0, 0, s, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.85)';
+                mapCtx.fill();
+                mapCtx.strokeStyle = '#fff';
+                mapCtx.lineWidth = 2;
+                mapCtx.stroke();
+                mapCtx.beginPath();
+                mapCtx.moveTo(0, -s * 1.6);
+                mapCtx.lineTo(-s * 0.7, s * 0.4);
+                mapCtx.lineTo(s * 0.7, s * 0.4);
+                mapCtx.closePath();
+                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.7)';
+                mapCtx.fill();
+                mapCtx.restore();
+            }
+        }
+
+        if (plannedPath && plannedPath.length > 1) {
+            mapCtx.beginPath();
+            const first = worldToPixel(plannedPath[0].x, plannedPath[0].y);
+            if (first) {
+                mapCtx.moveTo(first.x, first.y);
+                for (let i = 1; i < plannedPath.length; i++) {
+                    const pp = worldToPixel(plannedPath[i].x, plannedPath[i].y);
+                    if (pp) mapCtx.lineTo(pp.x, pp.y);
+                }
+            }
+            mapCtx.strokeStyle = 'rgba(52, 152, 219, 0.85)';
+            mapCtx.lineWidth = Math.max(2, scale * 0.2);
+            mapCtx.lineCap = 'round';
+            mapCtx.lineJoin = 'round';
+            mapCtx.setLineDash([scale * 0.3, scale * 0.15]);
+            mapCtx.stroke();
+            mapCtx.setLineDash([]);
+        }
+
+        if (robotPose) {
+            const p = worldToPixel(robotPose.x, robotPose.y);
+            if (p) {
+                const ryaw = 2 * Math.atan2(robotPose.qz, robotPose.qw);
+                mapCtx.save();
+                mapCtx.translate(p.x, p.y);
+                mapCtx.rotate(-ryaw);
+                const r = Math.max(4, scale * 0.12);
+                mapCtx.beginPath();
+                mapCtx.arc(0, 0, r, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.9)';
+                mapCtx.fill();
+                mapCtx.strokeStyle = '#fff';
+                mapCtx.lineWidth = 1.5;
+                mapCtx.stroke();
+                mapCtx.beginPath();
+                mapCtx.moveTo(0, -r * 1.5);
+                mapCtx.lineTo(-r * 0.8, r * 0.6);
+                mapCtx.lineTo(r * 0.8, r * 0.6);
+                mapCtx.closePath();
+                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.7)';
+                mapCtx.fill();
+                mapCtx.restore();
+            }
+        }
+    }
+
+    const mapListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/map',
+        messageType: 'nav_msgs/msg/OccupancyGrid',
+        throttle_rate: 500
+    });
+
+    mapListener.subscribe(function(message) {
+        try {
+            const info = message.info;
+            const w = info.width;
+            const h = info.height;
+            const data = message.data;
+            if (!w || !h || !data) return;
+
+            mapInfo = {
+                width: w,
+                height: h,
+                resolution: info.resolution,
+                origin: info.origin
+            };
+
+            const imageData = mapCtx.createImageData(w, h);
+            const pixels = imageData.data;
+
+            for (let i = 0; i < data.length; i++) {
+                const val = typeof data[i] === 'number' ? data[i] : parseInt(data[i]);
+                const gx = i % w;
+                const gy = Math.floor(i / w);
+                const py = (h - 1 - gy) * w + gx;
+                const p = py * 4;
+                if (val === -1) {
+                    pixels[p]     = 180;
+                    pixels[p + 1] = 182;
+                    pixels[p + 2] = 190;
+                    pixels[p + 3] = 255;
+                } else if (val === 0) {
+                    pixels[p]     = 255;
+                    pixels[p + 1] = 255;
+                    pixels[p + 2] = 255;
+                    pixels[p + 3] = 255;
+                } else {
+                    const t = Math.min(val / 100, 1);
+                    pixels[p]     = Math.round(60 - t * 40);
+                    pixels[p + 1] = Math.round(60 - t * 40);
+                    pixels[p + 2] = Math.round(65 - t * 40);
+                    pixels[p + 3] = Math.round(200 + t * 55);
+                }
+            }
+
+            const tmpCanvas = document.createElement('canvas');
+            tmpCanvas.width = w;
+            tmpCanvas.height = h;
+            tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
+            mapImage = new Image();
+            mapImage.onload = () => drawMap();
+            mapImage.src = tmpCanvas.toDataURL();
+
+            mapPanel.classList.add('visible');
+            mapPlaceholder.classList.add('hidden');
+            mapStatus.textContent = `${w}x${h} | res: ${info.resolution}m`;
+
+            drawMap();
+        } catch (e) {
+            console.error('Error rendering map:', e);
+            mapStatus.textContent = 'render error: ' + e.message;
+        }
+    });
+
+    const tfCache = {};
+
+    function composeTransform(parent, child) {
+        const cy = 2 * Math.atan2(parent.rotation.z, parent.rotation.w);
+        return {
+            x: parent.translation.x + Math.cos(cy) * child.translation.x - Math.sin(cy) * child.translation.y,
+            y: parent.translation.y + Math.sin(cy) * child.translation.x + Math.cos(cy) * child.translation.y,
+            qz: child.rotation.z,
+            qw: child.rotation.w
+        };
+    }
+
+    function resolveBaseFootprint() {
+        const bf = tfCache['map->base_footprint'];
+        if (bf) return bf;
+
+        const mapOdom = tfCache['map->odom'];
+        const odomBf = tfCache['odom->base_footprint'];
+        if (mapOdom && odomBf) return composeTransform(mapOdom, odomBf);
+
+        return tfCache['odom->base_footprint'] || null;
+    }
+
+    function handleTfMessage(message) {
+        for (const tfMsg of message.transforms) {
+            const parent = tfMsg.header.frame_id;
+            const child = tfMsg.child_frame_id;
+            const key = `${parent}->${child}`;
+            tfCache[key] = {
+                translation: tfMsg.transform.translation,
+                rotation: tfMsg.transform.rotation
+            };
+        }
+
+        const resolved = resolveBaseFootprint();
+        if (resolved) {
+            if (resolved.translation) {
+                robotPose = {
+                    x: resolved.translation.x, y: resolved.translation.y,
+                    qz: resolved.rotation.z, qw: resolved.rotation.w
+                };
+            } else {
+                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
+            }
+            drawMap();
+        }
+    }
+
+    const tfTopic = new ROSLIB.Topic({
+        ros: ros,
+        name: '/tf',
+        messageType: 'tf2_msgs/msg/TFMessage'
+    });
+    tfTopic.subscribe(handleTfMessage);
+
+    const tfStaticTopic = new ROSLIB.Topic({
+        ros: ros,
+        name: '/tf_static',
+        messageType: 'tf2_msgs/msg/TFMessage'
+    });
+    tfStaticTopic.subscribe(handleTfMessage);
+
+    const pathListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/planned_path',
+        messageType: 'nav_msgs/msg/Path'
+    });
+    pathListener.subscribe(function(message) {
+        if (message.poses && message.poses.length > 0) {
+            plannedPath = message.poses.map(function(p) {
+                return { x: p.pose.position.x, y: p.pose.position.y };
+            });
+        } else {
+            plannedPath = null;
+        }
+        drawMap();
+    });
+
+    const goalListener = new ROSLIB.Topic({
+        ros: ros,
+        name: '/goal_pose',
+        messageType: 'geometry_msgs/msg/PoseStamped'
+    });
+    goalListener.subscribe(function(message) {
+        goalPose = {
+            x: message.pose.position.x,
+            y: message.pose.position.y,
+            qz: message.pose.orientation.z,
+            qw: message.pose.orientation.w
+        };
+        drawMap();
+    });
+
+    const mapExpandBtn = document.getElementById('map-expand-btn');
+    const mapBackdrop = document.getElementById('map-backdrop');
+    let mapExpanded = false;
+
+    function toggleMapExpand() {
+        mapExpanded = !mapExpanded;
+        mapPanel.classList.toggle('expanded', mapExpanded);
+        mapBackdrop.classList.toggle('visible', mapExpanded);
+        mapExpandBtn.innerHTML = mapExpanded
+            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                 <polyline points="4 14 10 14 10 20"/>
+                 <polyline points="20 10 14 10 14 4"/>
+                 <line x1="14" y1="10" x2="21" y2="3"/>
+                 <line x1="3" y1="21" x2="10" y2="14"/>
+               </svg>`
+            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                 <polyline points="15 3 21 3 21 9"/>
+                 <polyline points="9 21 3 21 3 15"/>
+                 <line x1="21" y1="3" x2="14" y2="10"/>
+                 <line x1="3" y1="21" x2="10" y2="14"/>
+               </svg>`;
+        setTimeout(drawMap, 380);
+    }
+
+    mapExpandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMapExpand();
+    });
+
+    mapBackdrop.addEventListener('click', () => {
+        if (mapExpanded) toggleMapExpand();
+    });
+
+    const mapBody = document.querySelector('#map-panel .map-body');
+    const resizeObs = new ResizeObserver(() => { drawMap(); });
+    resizeObs.observe(mapBody);
+</script>
+</body>
+</html>

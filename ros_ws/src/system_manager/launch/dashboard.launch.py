@@ -34,7 +34,11 @@ def generate_launch_description():
             executable='rosbridge_websocket',
             name='rosbridge_websocket',
             output='screen',
-            parameters=[{'port': 9090}]
+            parameters=[{
+                'port': 9090,
+                'topic_whitelist': ['.*'],
+                'max_message_size': 10000000,
+            }]
         ),
         
         # 3. RVIZ2 (Für die visuelle Kontrolle von Map, Lidar und Robotermodell)
