@@ -10,6 +10,11 @@ def generate_launch_description():
             name='exploration',
         ),
         Node(
+            package='navigation',
+            executable='navigation',
+            name='navigation',
+        ),
+        Node(
             package='collision_avoidance',
             executable='collision_avoidance',
             name='collision_avoidance',

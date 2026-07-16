@@ -16,6 +16,13 @@ def generate_launch_description():
         name='follow_red',
     )
 
+
+    navigation = Node(
+        package='navigation',
+        executable='navigation',
+        name='navigation',
+    )
+
     return LaunchDescription([
         # Starte collision_avoidance zuerst
         collision_avoidance_node,
@@ -24,5 +31,9 @@ def generate_launch_description():
         TimerAction(
             period=2.0,
             actions=[follow_red_node],
+        ),
+        TimerAction(
+            period=5.0,
+            actions=[navigation],
         ),
     ])
