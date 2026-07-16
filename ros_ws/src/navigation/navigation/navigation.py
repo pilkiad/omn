@@ -6,14 +6,14 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.msg import Path
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
 from tf2_ros import Buffer, TransformListener
 
 
-class Navigation(Node):
+class Navigation(LifecycleNode):
     STATUS_HEARTBEAT_SEC = 2.0
     TF_MAP_FRAME = 'map'
     TF_ROBOT_FRAME = 'base_footprint'
@@ -88,12 +88,15 @@ class Navigation(Node):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring navigation node")
+
         planned_path_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             reliability=ReliabilityPolicy.RELIABLE,
         )
-        self.path_publisher = self.create_publisher(
+        self.path_publisher = self.create_lifecycle_publisher(
             Path,
             '/planned_path',
             planned_path_qos,
@@ -120,12 +123,35 @@ class Navigation(Node):
             1
         )
 
-        self.publisher = self.create_publisher(TargetVector, '/target_vector', 1)
+        self.publisher = self.create_lifecycle_publisher(TargetVector, '/target_vector', 1)
         self.timer = self.create_timer(0.2, self.timer_callback)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_timer = self.create_timer(0.1, self.get_tf)
         self.log_status(force=True)
+
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State):
+        self.get_logger().info("Activating navigation node")
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State):
+        self.get_logger().info("Deactivating navigation node")
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up navigation node")
+
+        self.destroy_lifecycle_publisher(self.path_publisher)
+        self.destroy_subscription(self.map_subscription)
+        self.destroy_subscription(self.pos_subscription)
+        self.destroy_subscription(self.goal_pose_subscription)
+        self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_timer(self.timer)
+        self.destroy_timer(self.tf_timer)
+
+        return TransitionCallbackReturn.SUCCESS
 
     def get_tf(self):
         try:
@@ -416,6 +442,9 @@ class Navigation(Node):
         self.clear_planned_path(reset_planning_context=True)
 
     def publish_planned_path(self):
+        if not self.path_publisher.is_activated:
+            return
+
         msg = Path()
         msg.header.frame_id = 'map'
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -474,6 +503,9 @@ class Navigation(Node):
         return smoothed
 
     def timer_callback(self):
+        if not self.publisher.is_activated:
+            return
+
         msg = TargetVector()
 
         readiness_status = self.readiness_status()
@@ -998,19 +1030,16 @@ class Navigation(Node):
 def main():
     rclpy.init()
     navigation = Navigation()
+
+    navigation.trigger_configure()
+    navigation.trigger_activate()
+
     try:
         rclpy.spin(navigation)
     except KeyboardInterrupt:
         pass
     finally:
-        try:
-            if rclpy.ok():
-                navigation.publisher.publish(TargetVector())
-        except Exception:
-            pass
-        try:
-            navigation.destroy_node()
-        except (Exception, KeyboardInterrupt):
-            pass
-        if rclpy.ok():
-            rclpy.shutdown()
+        navigation.trigger_deactivate()
+        navigation.trigger_cleanup()
+        navigation.destroy_node()
+        rclpy.shutdown()

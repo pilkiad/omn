@@ -9,7 +9,7 @@ Will explore the environment by
 """
 
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
@@ -19,7 +19,7 @@ from std_msgs.msg import Bool
 import math
 import random
 
-class CollisionAvoidance(Node):
+class CollisionAvoidance(LifecycleNode):
     def __init__(self):
         super().__init__("collision_avoidance")
 
@@ -42,12 +42,35 @@ class CollisionAvoidance(Node):
         self.unstuck_spin_direction = 0.5
         self.target_vector_age = 0
 
-        # Handle topics
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Configuring collision avoidance node")
+
         self.scan_subscription = self.create_subscription(LaserScan, "/scan", self.scan_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, "/target_vector", self.target_vector_callback, 1)
         self.toggle_unstuck_subscription = self.create_subscription(Bool, "/toggle_unstuck", self.toggle_unstuck_callback, 1)
-        self.publisher = self.create_publisher(Twist, "/base/cmd_vel", 1)
+        self.publisher = self.create_lifecycle_publisher(Twist, "/base/cmd_vel", 1)
         self.timer = self.create_timer(0.5, self.timer_callback)
+
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State):
+        self.get_logger().info("Activating collision avoidance node")
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State):
+        self.get_logger().info("Deactivating collision avoidance node")
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up collision avoidance node")
+
+        self.destroy_subscription(self.scan_subscription)
+        self.destroy_subscription(self.target_vector_subscription)
+        self.destroy_subscription(self.toggle_unstuck_subscription)
+        self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_timer(self.timer)
+
+        return TransitionCallbackReturn.SUCCESS
 
     def toggle_unstuck_callback(self, msg):
         self.unstuck_enabled = msg.data
@@ -136,6 +159,9 @@ class CollisionAvoidance(Node):
             self.unstuck_spin_direction = random.choice([-0.5, -0.25, -0.1, 0.1, 0.25, 0.5])
 
     def timer_callback(self):
+        if not self.publisher.is_activated:
+            return
+
         msg = Twist()
 
         # Check if we are able to move
@@ -173,12 +199,16 @@ class CollisionAvoidance(Node):
 def main():
     rclpy.init()
     colliosion_avoidance = CollisionAvoidance()
+
+    colliosion_avoidance.trigger_configure()
+    colliosion_avoidance.trigger_activate()
+
     try:
         rclpy.spin(colliosion_avoidance)
     except KeyboardInterrupt:
         pass
     finally:
-        if rclpy.ok():
-            colliosion_avoidance.publisher.publish(Twist())
-            colliosion_avoidance.destroy_node()
-            rclpy.shutdown()
+        colliosion_avoidance.trigger_deactivate()
+        colliosion_avoidance.trigger_cleanup()
+        colliosion_avoidance.destroy_node()
+        rclpy.shutdown()
