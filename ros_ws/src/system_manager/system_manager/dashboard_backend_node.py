@@ -3,7 +3,7 @@
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from lifecycle_msgs.srv import GetState  # NEU: Lifecycle Management Service
 import json
 import subprocess
@@ -24,6 +24,18 @@ class DashboardBackendNode(Node):
             self.slam_confidence_callback,
             10
         )
+
+        # 1b. SUBSCRIBER FOR UNSTUCK STATE
+        self.unstuck_state_sub = self.create_subscription(
+            Bool,
+            '/toggle_unstuck',
+            self.unstuck_state_callback,
+            10
+        )
+        self.unstuck_state = False
+
+        # 1c. PUBLISHER FOR UNSTUCK TOGGLE (so the dashboard can toggle it)
+        self.unstuck_pub = self.create_publisher(Bool, '/toggle_unstuck', 10)
 
         # 2. SUBSCRIBER FÜR STEUERUNGSBEFEHLE AUS DEM WEBINTERFACE
         self.cmd_sub = self.create_subscription(
@@ -57,6 +69,8 @@ class DashboardBackendNode(Node):
             'exploration',
             'follow_red',
             'navigation',
+            'roboclaw',
+            'urg_node_2',
         ]
         self.node_states = {node: "OFFLINE" for node in self.lifecycle_nodes}
         self.state_clients = {}
@@ -89,7 +103,6 @@ class DashboardBackendNode(Node):
             if cli.service_is_ready():
                 req = GetState.Request()
                 future = cli.call_async(req)
-                # Lambda fängt den aktuellen node_name und das future auf
                 future.add_done_callback(lambda f, n=node_name: self.lifecycle_state_cb(f, n))
             else:
                 self.node_states[node_name] = "OFFLINE"
@@ -146,19 +159,26 @@ class DashboardBackendNode(Node):
             "exploration": False,
             "navigation": False,
             "follow_red": False,
-            "sequential_start": self.sequential_active
+            "sequential_start": self.sequential_active,
+            "unstuck": self.unstuck_state
         }
 
         with self.process_lock:
-            # Prüfe normale Prozesse
             for key in ["slam", "blind_exploration", "exploration", "navigation", "follow_red"]:
                 if key in self.active_processes:
                     if self.active_processes[key].poll() is None:
                         states[key] = True
 
+        for key in self.lifecycle_nodes:
+            if key not in states:
+                states[key] = self.node_states.get(key, 'OFFLINE').lower() == 'active'
+
         msg = String()
         msg.data = json.dumps(states)
         self.button_status_pub.publish(msg)
+
+    def unstuck_state_callback(self, msg):
+        self.unstuck_state = msg.data
 
     def slam_confidence_callback(self, msg):
         """Callback für die Verarbeitung der Dashboard-Metriken (Autonomer Umschalter)."""
@@ -251,8 +271,24 @@ class DashboardBackendNode(Node):
                     self.ensure_node_is_killed("navigation")
                     self.toggle_node("follow_red", ["ros2", "launch", "follow_red", "follow_red_with_avoidance.launch.py"])
 
+                elif target == "urg_node_2":
+                    self.toggle_node("urg_node_2", ["ros2", "launch", "urg_node_2", "urg_node_2.launch.py"])
+
+                elif target == "roboclaw":
+                    self.toggle_node("roboclaw", ["ros2", "launch", "roboclaw", "roboclaw.launch.py"])
+
                 else:
                     self.get_logger().warn(f"Unbekanntes Launch-Ziel: {target}")
+
+            elif action == "toggle":
+                if target == "unstuck":
+                    new_state = not self.unstuck_state
+                    self.get_logger().info(f"🔄 Unstuck toggled to: {new_state}")
+                    msg = Bool()
+                    msg.data = new_state
+                    self.unstuck_pub.publish(msg)
+                else:
+                    self.get_logger().warn(f"Unbekanntes Toggle-Ziel: {target}")
 
         except json.JSONDecodeError as e:
             self.get_logger().error(f"Fehler beim Parsen des Befehls-JSON: {e}")

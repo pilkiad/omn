@@ -227,6 +227,7 @@
             background: rgba(239,68,68,0.04);
         }
 
+
         .node-seq-start .node-body {
             width: auto;
             height: auto;
@@ -435,7 +436,7 @@
             transition: opacity 0.3s ease;
         }
         #map-backdrop.visible {
-            opacity: 1;
+            opacity: 0.8;
             pointer-events: auto;
         }
         #map-panel .map-header {
@@ -786,6 +787,8 @@
             <button class="node-filter-btn" data-node="collision_avoidance">collision_avoidance</button>
             <button class="node-filter-btn" data-node="camera_follow">camera_follow</button>
             <button class="node-filter-btn" data-node="slam">slam</button>
+            <button class="node-filter-btn" data-node="roboclaw">roboclaw</button>
+            <button class="node-filter-btn" data-node="urg_node_2">urg_node_2</button>
         </div>
         <div id="console-body"></div>
     </div>
@@ -822,6 +825,8 @@
     let nodesData = {};
     let nodeElements = {};
     let isSequentialMode = false;
+    let unstuckState = false;
+    let buttonStates = {};
 
     function getStateClass(state) {
         const s = state.toLowerCase();
@@ -837,27 +842,36 @@
     }
 
     const TOPOLOGY = {
-        'slam':                    { x: 0.14, y: 0.15 },
-        'sequential_start':        { x: 0.22, y: 0.15 },
-        'exploration':             { x: 0.35, y: 0.18 },
-        'follow_red':              { x: 0.62, y: 0.18 },
-        'navigation':              { x: 0.45, y: 0.48 },
-        'blind_exploration':       { x: 0.68, y: 0.48 },
-        'collision_avoidance':     { x: 0.52, y: 0.68 },
-        'motor':                   { x: 0.52, y: 0.88 },
+        'sequential_start':        { x: 0.08, y: 0.08 },
+        'urg_node_2':              { x: 0.6, y: 0.2 },
+        'slam':                    { x: 0.4, y: 0.2 },
+        'exploration':             { x: 0.3, y: 0.35 },
+        'follow_red':              { x: 0.5, y: 0.35 },
+        'navigation':              { x: 0.4, y: 0.52 },
+        'blind_exploration':       { x: 0.6, y: 0.52 },
+        'collision_avoidance':     { x: 0.50, y: 0.72 },
+        'unstuck_toggle':          { x: 0.6, y: 0.72 },
+        'roboclaw':                { x: 0.50, y: 0.90 },
     };
 
     const FAKE_NODES = {
-        'motor':           { deriveFrom: 'collision_avoidance' },
         'sequential_start': { deriveFrom: null, alwaysState: 'ready' },
+        'unstuck_toggle': { deriveFrom: 'buttonState', buttonKey: 'unstuck' },
     };
 
+
+
     const EDGES = [
+        ['slam', 'navigation'],
+        ['slam', 'exploration'],
+        ['urg_node_2', 'slam'],
+        ['urg_node_2', 'blind_exploration'],
         ['exploration', 'navigation'],
         ['follow_red', 'navigation'],
         ['navigation', 'collision_avoidance'],
         ['blind_exploration', 'collision_avoidance'],
-        ['collision_avoidance', 'motor'],
+        ['unstuck_toggle', 'collision_avoidance'],
+        ['collision_avoidance', 'roboclaw'],
     ];
 
     const TOPOLOGY_KEYS = Object.keys(TOPOLOGY).sort((a, b) => b.length - a.length);
@@ -928,35 +942,7 @@
                 <feGaussianBlur stdDeviation="2" result="blur"/>
                 <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
-            <filter id="seq-glow">
-                <feGaussianBlur stdDeviation="6" result="blur"/>
-                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
         </defs>`;
-
-        const slamPos = positions[allKeys.find(k => matchTopologyKey(k) === 'slam')];
-        const seqPos = positions[allKeys.find(k => matchTopologyKey(k) === 'sequential_start')];
-        if (slamPos && seqPos) {
-            const padX = 70;
-            const padY = 100;
-            const minX = Math.min(slamPos.x, seqPos.x) - padX;
-            const maxX = Math.max(slamPos.x, seqPos.x) + padX;
-            const minY = Math.min(slamPos.y, seqPos.y) - padY;
-            const maxY = Math.max(slamPos.y, seqPos.y) + padY;
-            const gw = maxX - minX;
-            const gh = maxY - minY;
-            const seqActive = isSequentialMode;
-            const boxStroke = seqActive ? 'rgba(124, 58, 237, 0.45)' : 'rgba(124, 58, 237, 0.12)';
-            const boxFill = seqActive ? 'rgba(124, 58, 237, 0.04)' : 'rgba(124, 58, 237, 0.01)';
-            const boxFilter = seqActive ? 'filter="url(#seq-glow)"' : '';
-            const dashArray = seqActive ? '' : 'stroke-dasharray="6 4"';
-            svgContent += `<rect x="${minX}" y="${minY}" width="${gw}" height="${gh}"
-                rx="16" ry="16" fill="${boxFill}" stroke="${boxStroke}" stroke-width="1.5"
-                ${dashArray} ${boxFilter}/>`;
-            svgContent += `<text x="${minX + 12}" y="${minY + 18}"
-                font-size="10" font-weight="600" fill="rgba(124,58,237,0.4)"
-                letter-spacing="1.5" font-family="system-ui">SLAM &amp; CONTROL</text>`;
-        }
 
         for (const [from, to] of EDGES) {
             const fromKey = allKeys.find(k => matchTopologyKey(k) === from);
@@ -1010,6 +996,8 @@
             if (fake) {
                 if (fake.alwaysState) {
                     state = fake.alwaysState;
+                } else if (fake.deriveFrom === 'buttonState') {
+                    state = buttonStates[fake.buttonKey] ? 'active' : 'unconfigured';
                 } else if (fake.deriveFrom) {
                     const deriveKey = allKeys.find(k => matchTopologyKey(k) === fake.deriveFrom);
                     state = (deriveKey && nodesData[deriveKey]) ? nodesData[deriveKey] : 'unconfigured';
@@ -1029,11 +1017,16 @@
                 el.style.top = pos.y + 'px';
                 const isSeqEl = matchTopologyKey(key) === 'sequential_start';
                 el.className = `node ${isSeqEl ? 'node-seq-start' : stateClass}${isSeqEl && isSequentialMode ? ' seq-running' : ''}`;
-                if (!isSeqEl) el.querySelector('.node-state-badge').textContent = state.toUpperCase();
+                if (!isSeqEl) {
+                    const badgeEl = el.querySelector('.node-state-badge');
+                    badgeEl.textContent = state.toUpperCase();
+                }
             } else {
                 const topoKey = matchTopologyKey(key);
                 const isSlam = topoKey === 'slam';
-                const isMotor = topoKey === 'motor';
+                const isRoboclaw = topoKey === 'roboclaw';
+                const isUrg = topoKey === 'urg_node_2';
+                const isUnstuck = topoKey === 'unstuck_toggle';
                 const isSeq = topoKey === 'sequential_start';
                 const icon = isSlam
                     ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1041,7 +1034,7 @@
                          <line x1="8" y1="2" x2="8" y2="18"/>
                          <line x1="16" y1="6" x2="16" y2="22"/>
                        </svg>`
-                    : isMotor
+                    : isRoboclaw
                     ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                          <circle cx="12" cy="12" r="10"/>
                          <circle cx="12" cy="12" r="3"/>
@@ -1049,6 +1042,20 @@
                          <line x1="12" y1="19" x2="12" y2="22"/>
                          <line x1="2" y1="12" x2="5" y2="12"/>
                          <line x1="19" y1="12" x2="22" y2="12"/>
+                       </svg>`
+                    : isUrg
+                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                         <circle cx="12" cy="12" r="10"/>
+                         <circle cx="12" cy="12" r="8"/>
+                         <line x1="12" y1="4" x2="12" y2="8"/>
+                         <line x1="12" y1="16" x2="12" y2="20"/>
+                         <line x1="4" y1="12" x2="8" y2="12"/>
+                         <line x1="16" y1="12" x2="20" y2="12"/>
+                       </svg>`
+                    : isUnstuck
+                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                         <path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/>
+                         <path d="M9 12l2 2 4-4"/>
                        </svg>`
                     : isSeq
                     ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1061,6 +1068,8 @@
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
                 el.style.opacity = '0';
+                const badgeText = state.toUpperCase();
+                const labelText = isSeq ? 'AUTO' : isUnstuck ? 'UNSTUCK' : getShortName(key);
                 el.innerHTML = `
                     <div class="node-body">
                         <div class="node-click-flash">
@@ -1072,12 +1081,16 @@
                         <div class="pulse-ring"></div>
                         ${icon}
                     </div>
-                    <div class="node-label">${isSeq ? 'AUTO' : getShortName(key)}</div>
-                    <div class="node-state-badge">${state.toUpperCase()}</div>
+                    <div class="node-label">${labelText}</div>
+                    <div class="node-state-badge">${badgeText}</div>
                 `;
                 if (topoKey) {
                     el.addEventListener('click', () => {
-                        sendCommand('launch', topoKey);
+                        if (isUnstuck) {
+                            sendCommand('toggle', 'unstuck');
+                        } else {
+                            sendCommand('launch', topoKey);
+                        }
                         const flash = el.querySelector('.node-click-flash');
                         flash.classList.remove('animate');
                         void flash.offsetWidth;
@@ -1140,13 +1153,18 @@
 
     buttonStateListener.subscribe(function(message) {
         try {
-            const buttonStates = JSON.parse(message.data);
+            const bs = JSON.parse(message.data);
+            buttonStates = bs;
             const wasSeq = isSequentialMode;
-            isSequentialMode = buttonStates.sequential_start === true;
-            if (wasSeq !== isSequentialMode) {
-                seqBanner.classList.toggle('visible', isSequentialMode);
-                renderGraph();
+            isSequentialMode = bs.sequential_start === true;
+            const wasUnstuck = unstuckState;
+            unstuckState = bs.unstuck === true;
+            if (wasSeq !== isSequentialMode || wasUnstuck !== unstuckState) {
+                if (wasSeq !== isSequentialMode) {
+                    seqBanner.classList.toggle('visible', isSequentialMode);
+                }
             }
+            renderGraph();
         } catch (e) {
             console.error('Error parsing button states:', e);
         }
@@ -1351,14 +1369,25 @@
             tmpCanvas.height = h;
             tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
             mapImage = new Image();
-            mapImage.onload = () => drawMap();
+            mapImage.onload = () => {
+                const resolved = resolveBaseFootprint();
+                if (resolved) {
+                    if (resolved.translation) {
+                        robotPose = {
+                            x: resolved.translation.x, y: resolved.translation.y,
+                            qz: resolved.rotation.z, qw: resolved.rotation.w
+                        };
+                    } else {
+                        robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
+                    }
+                }
+                drawMap();
+            };
             mapImage.src = tmpCanvas.toDataURL();
 
             mapPanel.classList.add('visible');
             mapPlaceholder.classList.add('hidden');
             mapStatus.textContent = `${w}x${h} | res: ${info.resolution}m`;
-
-            drawMap();
         } catch (e) {
             console.error('Error rendering map:', e);
             mapStatus.textContent = 'render error: ' + e.message;
@@ -1426,6 +1455,22 @@
         messageType: 'tf2_msgs/msg/TFMessage'
     });
     tfStaticTopic.subscribe(handleTfMessage);
+
+    setInterval(() => {
+        if (!mapInfo || !mapImage) return;
+        const resolved = resolveBaseFootprint();
+        if (resolved) {
+            if (resolved.translation) {
+                robotPose = {
+                    x: resolved.translation.x, y: resolved.translation.y,
+                    qz: resolved.rotation.z, qw: resolved.rotation.w
+                };
+            } else {
+                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
+            }
+            drawMap();
+        }
+    }, 500);
 
     const pathListener = new ROSLIB.Topic({
         ros: ros,
