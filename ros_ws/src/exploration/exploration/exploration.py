@@ -32,9 +32,6 @@ class Exploration(LifecycleNode):
 
         self.already_visited = []
 
-    # ---------------------------
-    # LIFECYCLE
-    # ---------------------------
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring exploration node")
 
@@ -131,6 +128,8 @@ class Exploration(LifecycleNode):
             return
         if self.target_vector != [ 0.0, 0.0 ]:
             self.get_logger().info("Waiting for standstill...")
+            return
+        if not self.publisher.is_activated:
             return
 
         self.flood_fill()
