@@ -1,4 +1,6 @@
+from glob import glob
 from setuptools import find_packages, setup
+import os
 
 package_name = 'system_manager'
 
@@ -10,6 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/www', glob('www/*')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'system_manager=system_manager.system_manager:main',
+            'dashboard_backend_node = system_manager.dashboard_backend_node:main',
         ],
     },
 )

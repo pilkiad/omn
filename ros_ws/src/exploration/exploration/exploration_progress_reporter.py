@@ -1,6 +1,7 @@
 import rclpy
-from rclpy.node import Node
+from rclpy.node import LifecycleNode, State, TransitionCallbackReturn
 
+from std_msgs.msg import Float64
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import PoseStamped
@@ -11,7 +12,7 @@ import math
 import random
 import time
 
-class Exploration(Node):
+class ExplorationProgressReporter(LifecycleNode):
     def __init__(self):
         super().__init__("exploration_progress_reporter")
 
@@ -23,9 +24,32 @@ class Exploration(Node):
         self.map_origin = [ 0.0, 0.0 ]
         self.map_resolution = 0.0
 
-        self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
+    def on_configure(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("configuring exploration progress report")
+        self.map_subscription = self.create_lifecycle_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.pose_subscription = self.create_subscription(PoseStamped, '/pose', self.pose_callback, 1)
+        self.ratio_publisher = self.create_lifecycle_publisher(Float64, '/exploration_ratio', 10)
         self.exploration_time = self.create_timer(10, self.exploration_callback)
+
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, state: State):
+        self.get_logger().info("Activating exploration progress report")
+        return super().on_activate(state)
+
+    def on_deactivate(self, state: State):
+        self.get_logger().info("Deactivating exploration progress report")
+        return super().on_deactivate(state)
+
+    def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        self.get_logger().info("Cleaning up exploration progress reporter")
+
+        self.destroy_lifecycle_publisher(self.ratio_publisher)
+        self.destroy_subscription(self.map_subscription)
+        self.destroy_subscription(self.pose_subscription)
+        self.destroy_timer(self.exploration_time)
+
+        return TransitionCallbackReturn.SUCCESS
 
     def get_cell_at(self, x, y):
         return self.env_map[(y * self.map_width) + x]
@@ -40,6 +64,8 @@ class Exploration(Node):
             return
         if self.our_position is None:
             self.get_logger().info("Cannot explore: no current position")
+            return
+        if not self.ratio_publisher.is_activated:
             return
 
         frontier_count = 0
@@ -83,6 +109,10 @@ class Exploration(Node):
         ratio = frontier_count / ground_count
         self.get_logger().info(f"Exploration: {ratio*100}%")
 
+        msg = Float64()
+        msg.data = ratio
+        self.ratio_publisher.publish(msg)
+
     def pose_callback(self, msg):
         self.our_position = [ msg.pose.position.x, msg.pose.position.y ]
 
@@ -96,11 +126,17 @@ class Exploration(Node):
 
 def main():
     rclpy.init()
-    exploration = Exploration()
+    exploration_progress_reporter = ExplorationProgressReporter()
+
+    exploration_progress_reporter.trigger_configure()
+    exploration_progress_reporter.trigger_activate()
+
     try:
-        rclpy.spin(exploration)
+        rclpy.spin(exploration_progress_reporter)
     except KeyboardInterrupt:
         pass
     finally:
-        exploration.destroy_node()
+        exploration_progress_reporter.trigger_deactivate()
+        exploration_progress_reporter.trigger_cleanup()
+        exploration_progress_reporter.destroy_node()
         rclpy.shutdown()

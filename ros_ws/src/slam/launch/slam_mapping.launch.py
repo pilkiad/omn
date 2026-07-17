@@ -66,7 +66,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "slam_params_file": config_file,
-            "use_sim_time": "false",
+            "use_sim_time": "true",
         }.items()
     )
 

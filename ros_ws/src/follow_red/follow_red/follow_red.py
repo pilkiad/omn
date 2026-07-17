@@ -1,5 +1,5 @@
 import rclpy
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode
 from collision_interfaces.msg import TargetVector
 import cv2
 import numpy as np
@@ -7,9 +7,10 @@ import math
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-class CubeWegpunktNode(Node):
+
+class CubeWaypointNode(LifecycleNode):
     def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'tracking_performance.png'):
-        super().__init__('cube_wegpunkt_publisher')
+        super().__init__('camera_processor')
         self.video_path: Path = video_path
         self.plot_path: Path = plot_path
 
@@ -18,25 +19,15 @@ class CubeWegpunktNode(Node):
         # False -> Sendet stattdessen die kartesischen XY-Werte (für deinen alten Test)
         self.send_polar_instead_of_xy = True
 
-        # Publisher umbenannt auf das Topic und Interface deiner Gruppe
-        self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
-        self.cap = cv2.VideoCapture(0)
-
-        if not self.cap.isOpened():
-            self.get_logger().error('Camera not found or not accessible!')
+        # Kamera-/VideoWriter-Referenzen – werden erst in on_configure() geöffnet
+        self.cap = None
+        self.video_writer = None
+        self.publisher_ = None
+        self.timer = None
 
         # Camera frame settings
         self.frame_width = 640
         self.frame_height = 480
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-
-        # Video writer for debugging
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        self.video_writer = cv2.VideoWriter(str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height))
-
-        # Core processing loop timer (20 Hz)
-        self.timer = self.create_timer(0.05, self.process_image_loop)
 
         # Camera geometry parameters
         self.screen_center_x = self.frame_width / 2.0
@@ -57,7 +48,81 @@ class CubeWegpunktNode(Node):
         self.path_x = []
         self.path_y = []
 
-        self.get_logger().info(f'Cube Node gestartet. Modus: {"POLAR (Linear/Angular für Gruppe)" if self.send_polar_instead_of_xy else "CARTESIAN (X/Y)"}')
+        self.get_logger().info(
+            f'Cube Node gestartet. Modus: '
+            f'{"POLAR (Linear/Angular für Gruppe)" if self.send_polar_instead_of_xy else "CARTESIAN (X/Y)"}'
+        )
+
+    def _open_camera(self) -> bool:
+        """Öffnet die Kamera und konfiguriert sie."""
+        self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            return False
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        return True
+
+    def _create_video_writer(self):
+        """Erstellt den VideoWriter für Debug-Aufzeichnung."""
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.video_writer = cv2.VideoWriter(
+            str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height)
+        )
+
+    def on_configure(self) -> None:
+        if not self._open_camera():
+            self.get_logger().error('Camera not found or not accessible!')
+            return rclpy.lifecycle.TransitionCallbackReturn.FAILURE
+
+        self._create_video_writer()
+
+        self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
+
+        # Core processing loop timer (20 Hz)
+        self.timer = self.create_timer(0.05, self.process_image_loop)
+
+        self.get_logger().info('Lifecycle Node configured.')
+        return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self) -> None:
+        if self.publisher_:
+            self.publisher_.on_activate()
+        self.get_logger().info('Lifecycle Node activated.')
+        return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self) -> None:
+        if self.publisher_:
+            self.publisher_.on_deactivate()
+        self.get_logger().info('Lifecycle Node deactivated.')
+        return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
+
+    def _cleanup_resources(self):
+        """Gibt Kamera, VideoWriter und Timer frei."""
+        if self.timer is not None:
+            self.destroy_timer(self.timer)
+            self.timer = None
+        if self.publisher_ is not None:
+            self.publisher_.on_cleanup()
+            self.publisher_ = None
+        if self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        cv2.destroyAllWindows()
+
+    def on_cleanup(self) -> None:
+        self._cleanup_resources()
+        self.get_logger().info('Lifecycle Node cleaned up.')
+        return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state) -> None:
+        self._cleanup_resources()
+        if self.path_x:
+            self.plot_data()
+        self.get_logger().info('Lifecycle Node shut down.')
+        return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def create_mask(self, hsv_frame: np.ndarray) -> np.ndarray:
         lower_red1 = np.array([0, 140, 70])
@@ -72,7 +137,7 @@ class CubeWegpunktNode(Node):
         kernel = np.ones((7, 7), np.uint8)
         mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         erode_kernel = np.ones((3, 3), np.uint8)
-        return cv2.remove_artifacts if False else cv2.erode(mask_closed, erode_kernel, iterations=1)
+        return cv2.erode(mask_closed, erode_kernel, iterations=1)
 
     def estimate_distance(self, current_area: float) -> float:
         if current_area <= 0:
@@ -100,6 +165,9 @@ class CubeWegpunktNode(Node):
         return target_cx, target_area
 
     def process_image_loop(self) -> None:
+        if self.cap is None or not self.cap.isOpened():
+            return
+
         ret, frame = self.cap.read()
         if not ret:
             return
@@ -156,24 +224,24 @@ class CubeWegpunktNode(Node):
             self.last_area *= 0.5
             self.last_cx = self.screen_center_x
 
-        self.video_writer.write(frame)
+        if self.video_writer is not None:
+            self.video_writer.write(frame)
 
         if val_linear == 0.0 and val_angular == 0.0:
             return
 
-        msg = TargetVector()
-        msg.linear = val_linear
-        msg.angular = val_angular
-        self.publisher_.publish(msg)
+        if self.publisher_ is not None:
+            msg = TargetVector()
+            msg.linear = val_linear
+            msg.angular = val_angular
+            self.publisher_.publish(msg)
 
         if cube_detected > 0:
             self.get_logger().info(f"Sende Target -> Linear: {val_linear:.2f}, Angular: {val_angular:.2f}")
 
-        #cv2.imshow("Cube Wegpunkt Tracker", frame)
-        #cv2.waitKey(1)
-
     def plot_data(self) -> None:
-        if not self.path_x: return
+        if not self.path_x:
+            return
         plt.figure(figsize=(8, 8))
         plt.plot(self.path_y, self.path_x, label='Cube Trajectory', color='red', marker='o', markersize=3, alpha=0.6)
         plt.scatter(0, 0, color='blue', s=150, marker='^', label='Robot (Origin)')
@@ -185,22 +253,24 @@ class CubeWegpunktNode(Node):
         plt.close()
 
     def destroy_node(self) -> None:
-        self.cap.release()
-        self.video_writer.release()
-        cv2.destroyAllWindows()
-        if self.path_x: self.plot_data()
+        self._cleanup_resources()
+        if self.path_x:
+            self.plot_data()
         super().destroy_node()
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = CubeWegpunktNode()
+    node = CubeWaypointNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        if rclpy.ok(): rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
