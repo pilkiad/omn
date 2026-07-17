@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.lifecycle import LifecycleNode
 from collision_interfaces.msg import TargetVector
+from geometry_msgs.msg import PoseStamped
 import cv2
 import numpy as np
 import math
@@ -9,20 +10,22 @@ from pathlib import Path
 
 
 class CubeWaypointNode(LifecycleNode):
-    def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'tracking_performance.png'):
+    def __init__(self, video_path: Path = 'debug_output.mp4', plot_path: Path = 'debug_tracking_performance.png'):
         super().__init__('camera_processor')
         self.video_path: Path = video_path
         self.plot_path: Path = plot_path
 
         # --- TEST-SWITCH ---
         # True  -> Sendet .linear (Distanz) und .angular (Winkel) an die Collision Avoidance
-        # False -> Sendet stattdessen die kartesischen XY-Werte (für deinen alten Test)
-        self.send_polar_instead_of_xy = True
+        # False -> Sendet stattdessen PoseStamped (X/Y) an /goal_pose für Navigation
+        self.declare_parameter('send_polar', True)
+        self.send_polar_instead_of_xy = self.get_parameter('send_polar').get_parameter_value().bool_value
 
         # Kamera-/VideoWriter-Referenzen – werden erst in on_configure() geöffnet
         self.cap = None
         self.video_writer = None
         self.publisher_ = None
+        self.goal_pose_publisher_ = None
         self.timer = None
 
         # Camera frame settings
@@ -50,7 +53,7 @@ class CubeWaypointNode(LifecycleNode):
 
         self.get_logger().info(
             f'Cube Node gestartet. Modus: '
-            f'{"POLAR (Linear/Angular für Gruppe)" if self.send_polar_instead_of_xy else "CARTESIAN (X/Y)"}'
+            f'{"POLAR (Linear/Angular)" if self.send_polar_instead_of_xy else "POSE (X/Y -> /goal_pose)"}'
         )
 
     def _open_camera(self) -> bool:
@@ -76,7 +79,12 @@ class CubeWaypointNode(LifecycleNode):
 
         self._create_video_writer()
 
-        self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
+        if self.send_polar_instead_of_xy:
+            self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
+            self.goal_pose_publisher_ = None
+        else:
+            self.goal_pose_publisher_ = self.create_publisher(PoseStamped, '/goal_pose', 10)
+            self.publisher_ = None
 
         # Core processing loop timer (20 Hz)
         self.timer = self.create_timer(0.05, self.process_image_loop)
@@ -87,12 +95,16 @@ class CubeWaypointNode(LifecycleNode):
     def on_activate(self) -> None:
         if self.publisher_:
             self.publisher_.on_activate()
+        if self.goal_pose_publisher_:
+            self.goal_pose_publisher_.on_activate()
         self.get_logger().info('Lifecycle Node activated.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def on_deactivate(self) -> None:
         if self.publisher_:
             self.publisher_.on_deactivate()
+        if self.goal_pose_publisher_:
+            self.goal_pose_publisher_.on_deactivate()
         self.get_logger().info('Lifecycle Node deactivated.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
@@ -104,6 +116,9 @@ class CubeWaypointNode(LifecycleNode):
         if self.publisher_ is not None:
             self.publisher_.on_cleanup()
             self.publisher_ = None
+        if self.goal_pose_publisher_ is not None:
+            self.goal_pose_publisher_.on_cleanup()
+            self.goal_pose_publisher_ = None
         if self.video_writer is not None:
             self.video_writer.release()
             self.video_writer = None
@@ -230,11 +245,22 @@ class CubeWaypointNode(LifecycleNode):
         if val_linear == 0.0 and val_angular == 0.0:
             return
 
-        if self.publisher_ is not None:
-            msg = TargetVector()
-            msg.linear = val_linear
-            msg.angular = val_angular
-            self.publisher_.publish(msg)
+        if self.send_polar_instead_of_xy:
+            if self.publisher_ is not None:
+                msg = TargetVector()
+                msg.linear = val_linear
+                msg.angular = val_angular
+                self.publisher_.publish(msg)
+        else:
+            if self.goal_pose_publisher_ is not None:
+                msg = PoseStamped()
+                msg.header.frame_id = 'map'
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.pose.position.x = val_linear
+                msg.pose.position.y = val_angular
+                msg.pose.position.z = 0.0
+                msg.pose.orientation.w = 1.0
+                self.goal_pose_publisher_.publish(msg)
 
         if cube_detected > 0:
             self.get_logger().info(f"Sende Target -> Linear: {val_linear:.2f}, Angular: {val_angular:.2f}")
