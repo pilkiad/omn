@@ -216,7 +216,7 @@ class DashboardBackendNode(Node):
             cli = self.create_client(GetState, f'/{node_name}/get_state')
             self.state_clients[node_name] = cli
 
-        self.lifecycle_timer = self.create_timer(2.0, self.check_lifecycle_states)
+        self.lifecycle_timer = self.create_timer(0.5, self.check_lifecycle_states)
 
         self.active_processes = {}
         self.process_lock = threading.Lock()
@@ -226,7 +226,7 @@ class DashboardBackendNode(Node):
 
         self.latest_slam_metrics = {}
 
-        self.status_timer = self.create_timer(0.5, self.publish_button_states)
+        self.status_timer = self.create_timer(0.25, self.publish_button_states)
 
         self._start_http_server()
         self.print_welcome_banner()
@@ -251,12 +251,17 @@ class DashboardBackendNode(Node):
                 "exploration": False,
                 "navigation": False,
                 "follow_red": False,
+                "urg_node_2": False,
+                "roboclaw": False,
                 "sequential_start": self.sequential_active,
                 "unstuck": self.unstuck_state
             }
-            for key in self.active_processes:
+            for key in list(self.active_processes):
                 if self.active_processes[key].poll() is None:
                     button_states[key] = True
+                    self.node_states[key] = "active"
+                elif key not in button_states:
+                    self.node_states[key] = "inactive"
 
         for key in self.lifecycle_nodes:
             if key not in button_states:
@@ -296,7 +301,15 @@ class DashboardBackendNode(Node):
 
     def check_lifecycle_states(self):
         """Fragt asynchron (non-blocking) den Status der Lifecycle Nodes ab."""
+        with self.process_lock:
+            running_keys = set()
+            for key, proc in self.active_processes.items():
+                if proc.poll() is None:
+                    running_keys.add(key)
+
         for node_name, cli in self.state_clients.items():
+            if node_name in running_keys:
+                continue
             if cli.service_is_ready():
                 req = GetState.Request()
                 future = cli.call_async(req)
@@ -351,12 +364,14 @@ class DashboardBackendNode(Node):
             "exploration": False,
             "navigation": False,
             "follow_red": False,
+            "urg_node_2": False,
+            "roboclaw": False,
             "sequential_start": self.sequential_active,
             "unstuck": self.unstuck_state
         }
 
         with self.process_lock:
-            for key in self.active_processes:
+            for key in list(self.active_processes):
                 if self.active_processes[key].poll() is None:
                     states[key] = True
 
