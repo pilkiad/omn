@@ -1,5 +1,6 @@
 import os
 from launch import LaunchDescription
+from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
@@ -17,8 +18,21 @@ def generate_launch_description():
     # kannst du diesen Pfad einkommentieren und unten bei arguments übergeben.
     # rviz_config_path = os.path.join(get_package_share_directory(package_name), 'rviz', 'default.rviz')
 
+    www_dir = os.path.join(get_package_share_directory(package_name), 'www')
+
     return LaunchDescription([
         
+        # 0. HTTP SERVER (Stellt die HTML-Dateien bereit für Remote-Zugriff)
+        ExecuteProcess(
+            cmd=[
+                'python3', '-m', 'http.server', '8080',
+                '--bind', '0.0.0.0',
+                '--directory', www_dir,
+            ],
+            name='http_server',
+            output='screen',
+        ),
+
         # 1. DAS BACKEND (Deine State-Machine & Schutzmatrix)
         Node(
             package=package_name,

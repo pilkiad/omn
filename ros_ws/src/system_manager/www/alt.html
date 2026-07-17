@@ -795,7 +795,7 @@
 </div>
 
 <script>
-    const ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
+    const ros = new ROSLIB.Ros({ url: `ws://${window.location.hostname || 'localhost'}:9090` });
     const wsDot = document.getElementById('ws-dot');
     const wsText = document.getElementById('ws-text');
 
