@@ -32,6 +32,7 @@ setup(
         'console_scripts': [
             'robot_manager = robot_manager.robot_manager_node:main',
             'dashboard_sim = robot_manager.dashboard_server:main',
+            'pose_publisher = robot_manager.pose_publisher:main',
         ],
     },
 )
