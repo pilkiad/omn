@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Node Status Graph</title>
-    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -726,7 +725,7 @@
 
 <svg id="graph-canvas"></svg>
 <div id="graph-container"></div>
-<div id="seq-banner" class="seq-banner">⚡ Sequential Mode Active — Nodes auto-managed</div>
+<div id="seq-banner" class="seq-banner">Sequential Mode Active -- Nodes auto-managed</div>
 <div id="map-backdrop"></div>
 <div id="map-panel">
     <div class="map-header">
@@ -743,7 +742,7 @@
     <div class="map-body">
         <div class="map-placeholder" id="map-placeholder">
             No map received
-            <div class="map-status" id="map-status">subscribing to /map...</div>
+            <div class="map-status" id="map-status">waiting for map data...</div>
         </div>
         <canvas id="map-canvas"></canvas>
     </div>
@@ -795,38 +794,29 @@
 </div>
 
 <script>
-    const ros = new ROSLIB.Ros({ url: `ws://${window.location.hostname || 'localhost'}:9090` });
     const wsDot = document.getElementById('ws-dot');
     const wsText = document.getElementById('ws-text');
-
-    ros.on('connection', () => {
-        wsDot.className = 'ws-dot ws-connected';
-        wsText.textContent = 'CONNECTED';
-        wsText.style.color = '#16a34a';
-        mapStatus.textContent = 'connected, waiting for /map...';
-    });
-    ros.on('error', () => {
-        wsDot.className = 'ws-dot ws-disconnected';
-        wsText.textContent = 'ERROR';
-        wsText.style.color = '#dc2626';
-        mapStatus.textContent = 'rosbridge error';
-    });
-    ros.on('close', () => {
-        wsDot.className = 'ws-dot ws-disconnected';
-        wsText.textContent = 'DISCONNECTED';
-        wsText.style.color = '#dc2626';
-        mapStatus.textContent = 'disconnected';
-    });
-
     const container = document.getElementById('graph-container');
     const svg = document.getElementById('graph-canvas');
     const noData = document.getElementById('no-data');
+    const seqBanner = document.getElementById('seq-banner');
+    const mapPanel = document.getElementById('map-panel');
+    const mapCanvas = document.getElementById('map-canvas');
+    const mapPlaceholder = document.getElementById('map-placeholder');
+    const mapStatus = document.getElementById('map-status');
+    const mapCtx = mapCanvas.getContext('2d');
 
     let nodesData = {};
     let nodeElements = {};
     let isSequentialMode = false;
     let unstuckState = false;
     let buttonStates = {};
+    let mapInfo = null;
+    let mapImage = null;
+    let robotPose = null;
+    let plannedPath = null;
+    let goalPose = null;
+    let mapTransform = null;
 
     function getStateClass(state) {
         const s = state.toLowerCase();
@@ -858,8 +848,6 @@
         'sequential_start': { deriveFrom: null, alwaysState: 'ready' },
         'unstuck_toggle': { deriveFrom: 'buttonState', buttonKey: 'unstuck' },
     };
-
-
 
     const EDGES = [
         ['slam', 'navigation'],
@@ -929,20 +917,20 @@
         const edgeMap = {};
         for (const key of allKeys) edgeMap[key] = true;
 
-        let svgContent = `<defs>
-            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
-                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#c0c0d0"/>
-            </marker>
-            <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"
-                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#22c55e"/>
-            </marker>
-            <filter id="glow">
-                <feGaussianBlur stdDeviation="2" result="blur"/>
-                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-        </defs>`;
+        let svgContent = '<defs>' +
+            '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"' +
+            ' markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+            '<path d="M 0 1 L 8 5 L 0 9 z" fill="#c0c0d0"/>' +
+            '</marker>' +
+            '<marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"' +
+            ' markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+            '<path d="M 0 1 L 8 5 L 0 9 z" fill="#22c55e"/>' +
+            '</marker>' +
+            '<filter id="glow">' +
+            '<feGaussianBlur stdDeviation="2" result="blur"/>' +
+            '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>' +
+            '</filter>' +
+            '</defs>';
 
         for (const [from, to] of EDGES) {
             const fromKey = allKeys.find(k => matchTopologyKey(k) === from);
@@ -982,10 +970,10 @@
             const x2 = pb.x - nx * rEnd;
             const y2 = pb.y - ny * rEnd;
 
-            svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-                stroke="${strokeColor}" stroke-width="${strokeW}"
-                marker-end="${markerRef}" filter="url(#glow)"
-                stroke-linecap="round"/>`;
+            svgContent += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"' +
+                ' stroke="' + strokeColor + '" stroke-width="' + strokeW + '"' +
+                ' marker-end="' + markerRef + '" filter="url(#glow)"' +
+                ' stroke-linecap="round"/>';
         }
 
         svg.innerHTML = svgContent;
@@ -1016,7 +1004,7 @@
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
                 const isSeqEl = matchTopologyKey(key) === 'sequential_start';
-                el.className = `node ${isSeqEl ? 'node-seq-start' : stateClass}${isSeqEl && isSequentialMode ? ' seq-running' : ''}`;
+                el.className = 'node ' + (isSeqEl ? 'node-seq-start' : stateClass) + (isSeqEl && isSequentialMode ? ' seq-running' : '');
                 if (!isSeqEl) {
                     const badgeEl = el.querySelector('.node-state-badge');
                     badgeEl.textContent = state.toUpperCase();
@@ -1029,67 +1017,66 @@
                 const isUnstuck = topoKey === 'unstuck_toggle';
                 const isSeq = topoKey === 'sequential_start';
                 const icon = isSlam
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-                         <line x1="8" y1="2" x2="8" y2="18"/>
-                         <line x1="16" y1="6" x2="16" y2="22"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>' +
+                      '<line x1="8" y1="2" x2="8" y2="18"/>' +
+                      '<line x1="16" y1="6" x2="16" y2="22"/>' +
+                      '</svg>'
                     : isRoboclaw
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <circle cx="12" cy="12" r="10"/>
-                         <circle cx="12" cy="12" r="3"/>
-                         <line x1="12" y1="2" x2="12" y2="5"/>
-                         <line x1="12" y1="19" x2="12" y2="22"/>
-                         <line x1="2" y1="12" x2="5" y2="12"/>
-                         <line x1="19" y1="12" x2="22" y2="12"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<circle cx="12" cy="12" r="10"/>' +
+                      '<circle cx="12" cy="12" r="3"/>' +
+                      '<line x1="12" y1="2" x2="12" y2="5"/>' +
+                      '<line x1="12" y1="19" x2="12" y2="22"/>' +
+                      '<line x1="2" y1="12" x2="5" y2="12"/>' +
+                      '<line x1="19" y1="12" x2="22" y2="12"/>' +
+                      '</svg>'
                     : isUrg
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <circle cx="12" cy="12" r="10"/>
-                         <circle cx="12" cy="12" r="8"/>
-                         <line x1="12" y1="4" x2="12" y2="8"/>
-                         <line x1="12" y1="16" x2="12" y2="20"/>
-                         <line x1="4" y1="12" x2="8" y2="12"/>
-                         <line x1="16" y1="12" x2="20" y2="12"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<circle cx="12" cy="12" r="10"/>' +
+                      '<circle cx="12" cy="12" r="8"/>' +
+                      '<line x1="12" y1="4" x2="12" y2="8"/>' +
+                      '<line x1="12" y1="16" x2="12" y2="20"/>' +
+                      '<line x1="4" y1="12" x2="8" y2="12"/>' +
+                      '<line x1="16" y1="12" x2="20" y2="12"/>' +
+                      '</svg>'
                     : isUnstuck
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                         <path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/>
-                         <path d="M9 12l2 2 4-4"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/>' +
+                      '<path d="M9 12l2 2 4-4"/>' +
+                      '</svg>'
                     : isSeq
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                       </svg>`
-                    : `<div class="led-core"></div>`;
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>' +
+                      '</svg>'
+                    : '<div class="led-core"></div>';
 
                 const el = document.createElement('div');
-                el.className = `node ${isSeq ? 'node-seq-start' : stateClass}${isSeq && isSequentialMode ? ' seq-running' : ''}`;
+                el.className = 'node ' + (isSeq ? 'node-seq-start' : stateClass) + (isSeq && isSequentialMode ? ' seq-running' : '');
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
                 el.style.opacity = '0';
                 const badgeText = state.toUpperCase();
                 const labelText = isSeq ? 'AUTO' : isUnstuck ? 'UNSTUCK' : getShortName(key);
-                el.innerHTML = `
-                    <div class="node-body">
-                        <div class="node-click-flash">
-                            <div class="ring"></div>
-                            <div class="ring"></div>
-                            <div class="ring"></div>
-                            <div class="burst"></div>
-                        </div>
-                        <div class="pulse-ring"></div>
-                        ${icon}
-                    </div>
-                    <div class="node-label">${labelText}</div>
-                    <div class="node-state-badge">${badgeText}</div>
-                `;
+                el.innerHTML =
+                    '<div class="node-body">' +
+                        '<div class="node-click-flash">' +
+                            '<div class="ring"></div>' +
+                            '<div class="ring"></div>' +
+                            '<div class="ring"></div>' +
+                            '<div class="burst"></div>' +
+                        '</div>' +
+                        '<div class="pulse-ring"></div>' +
+                        icon +
+                    '</div>' +
+                    '<div class="node-label">' + labelText + '</div>' +
+                    '<div class="node-state-badge">' + badgeText + '</div>';
                 if (topoKey) {
                     el.addEventListener('click', () => {
                         if (isUnstuck) {
-                            sendCommand('toggle', 'unstuck');
+                            sendCommand({ action: 'toggle', target: 'unstuck' });
                         } else {
-                            sendCommand('launch', topoKey);
+                            sendCommand({ action: 'launch', target: topoKey });
                         }
                         const flash = el.querySelector('.node-click-flash');
                         flash.classList.remove('animate');
@@ -1114,98 +1101,16 @@
         }
     }
 
-    const commandPublisher = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/api_command',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    function sendCommand(action, target, args = "") {
-        const payload = JSON.stringify({ action: action, target: target, args: args });
-        const message = new ROSLIB.Message({ data: payload });
-        commandPublisher.publish(message);
-        console.log("Command:", payload);
-    }
-
-    const nodeStateListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/node_states',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    nodeStateListener.subscribe(function(message) {
-        try {
-            const states = JSON.parse(message.data);
-            nodesData = states;
-            renderGraph();
-        } catch (e) {
-            console.error('Error parsing node states:', e);
-        }
-    });
-
-    const seqBanner = document.getElementById('seq-banner');
-
-    const buttonStateListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/button_states',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    buttonStateListener.subscribe(function(message) {
-        try {
-            const bs = JSON.parse(message.data);
-            buttonStates = bs;
-            const wasSeq = isSequentialMode;
-            isSequentialMode = bs.sequential_start === true;
-            const wasUnstuck = unstuckState;
-            unstuckState = bs.unstuck === true;
-            if (wasSeq !== isSequentialMode || wasUnstuck !== unstuckState) {
-                if (wasSeq !== isSequentialMode) {
-                    seqBanner.classList.toggle('visible', isSequentialMode);
-                }
-            }
-            renderGraph();
-        } catch (e) {
-            console.error('Error parsing button states:', e);
-        }
-    });
-
-    window.addEventListener('resize', renderGraph);
-
-    const mapPanel = document.getElementById('map-panel');
-    const mapCanvas = document.getElementById('map-canvas');
-    const mapPlaceholder = document.getElementById('map-placeholder');
-    const mapStatus = document.getElementById('map-status');
-    const mapCtx = mapCanvas.getContext('2d');
-
-    let mapInfo = null;
-    let mapImage = null;
-    let robotPose = null;
-    let plannedPath = null;
-    let goalPose = null;
-    let mapTransform = null;
-
     function worldToPixel(wx, wy) {
         if (!mapInfo || !mapTransform) return null;
         const res = mapInfo.resolution;
-        const ox = mapInfo.origin.position.x;
-        const oy = mapInfo.origin.position.y;
+        const ox = mapInfo.origin_x;
+        const oy = mapInfo.origin_y;
         const gw = mapInfo.width;
         const gh = mapInfo.height;
-        const ori = mapInfo.origin.orientation;
 
-        let dx = wx - ox;
-        let dy = wy - oy;
-        let gridX, gridY;
-        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
-            const yaw = 2 * Math.atan2(ori.z, ori.w);
-            const c = Math.cos(yaw), s = Math.sin(yaw);
-            gridX = (c * dx + s * dy) / res;
-            gridY = (-s * dx + c * dy) / res;
-        } else {
-            gridX = dx / res;
-            gridY = dy / res;
-        }
+        const gridX = (wx - ox) / res;
+        const gridY = (wy - oy) / res;
 
         return {
             x: mapTransform.offsetX + gridX * mapTransform.scale,
@@ -1213,30 +1118,71 @@
         };
     }
 
+    function pixelToWorld(px, py) {
+        if (!mapInfo || !mapTransform) return null;
+        const res = mapInfo.resolution;
+        const ox = mapInfo.origin_x;
+        const oy = mapInfo.origin_y;
+        const gw = mapInfo.width;
+        const gh = mapInfo.height;
+
+        const gridX = (px - mapTransform.offsetX) / mapTransform.scale;
+        const gridY = gh - 1 - (py - mapTransform.offsetY) / mapTransform.scale;
+
+        return { x: ox + gridX * res, y: oy + gridY * res };
+    }
+
+    function decodeMap(payload) {
+        const binary = atob(payload.data_b64 || '');
+        const cells = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) cells[i] = binary.charCodeAt(i);
+        const w = payload.width, h = payload.height;
+        const imageData = mapCtx.createImageData(w, h);
+        const pixels = imageData.data;
+        for (let i = 0; i < cells.length; i++) {
+            const val = cells[i];
+            const gx = i % w;
+            const gy = Math.floor(i / w);
+            const py = (h - 1 - gy) * w + gx;
+            const p = py * 4;
+            if (val === 0) {
+                pixels[p] = 255; pixels[p+1] = 255; pixels[p+2] = 255; pixels[p+3] = 255;
+            } else if (val === 255) {
+                pixels[p] = 0; pixels[p+1] = 0; pixels[p+2] = 0; pixels[p+3] = 0;
+            } else if (val >= 100) {
+                pixels[p] = 20; pixels[p+1] = 20; pixels[p+2] = 25; pixels[p+3] = 255;
+            } else {
+                const t = val / 100;
+                pixels[p] = Math.round(60 - t*40);
+                pixels[p+1] = Math.round(60 - t*40);
+                pixels[p+2] = Math.round(65 - t*40);
+                pixels[p+3] = Math.round(200 + t*55);
+            }
+        }
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = w; tmpCanvas.height = h;
+        tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
+        const img = new Image();
+        img.onload = () => { mapImage = img; drawMap(); };
+        img.src = tmpCanvas.toDataURL();
+    }
+
     function drawMap() {
         if (!mapImage || !mapInfo) return;
-
         const body = document.querySelector('#map-panel .map-body');
         const rect = body.getBoundingClientRect();
-        const cw = rect.width;
-        const ch = rect.height;
+        const cw = rect.width, ch = rect.height;
         if (cw === 0 || ch === 0) return;
-
         const dpr = window.devicePixelRatio || 1;
         const bufW = Math.round(cw * dpr);
         const bufH = Math.round(ch * dpr);
-        mapCanvas.width = bufW;
-        mapCanvas.height = bufH;
-        mapCanvas.style.width = cw + 'px';
-        mapCanvas.style.height = ch + 'px';
-
-        const gw = mapInfo.width;
-        const gh = mapInfo.height;
+        mapCanvas.width = bufW; mapCanvas.height = bufH;
+        mapCanvas.style.width = cw + 'px'; mapCanvas.style.height = ch + 'px';
+        const gw = mapInfo.width, gh = mapInfo.height;
         const scale = Math.min(bufW / gw, bufH / gh);
         const offsetX = (bufW - gw * scale) / 2;
         const offsetY = (bufH - gh * scale) / 2;
         mapTransform = { scale, offsetX, offsetY };
-
         mapCtx.clearRect(0, 0, bufW, bufH);
         mapCtx.imageSmoothingEnabled = true;
         mapCtx.imageSmoothingQuality = 'high';
@@ -1246,24 +1192,14 @@
             const p = worldToPixel(goalPose.x, goalPose.y);
             if (p) {
                 const gyaw = 2 * Math.atan2(goalPose.qz, goalPose.qw);
-                mapCtx.save();
-                mapCtx.translate(p.x, p.y);
-                mapCtx.rotate(-gyaw);
+                mapCtx.save(); mapCtx.translate(p.x, p.y); mapCtx.rotate(-gyaw);
                 const s = Math.max(6, scale * 0.12);
+                mapCtx.beginPath(); mapCtx.arc(0, 0, s, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.85)'; mapCtx.fill();
+                mapCtx.strokeStyle = '#fff'; mapCtx.lineWidth = 2; mapCtx.stroke();
                 mapCtx.beginPath();
-                mapCtx.arc(0, 0, s, 0, Math.PI * 2);
-                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.85)';
-                mapCtx.fill();
-                mapCtx.strokeStyle = '#fff';
-                mapCtx.lineWidth = 2;
-                mapCtx.stroke();
-                mapCtx.beginPath();
-                mapCtx.moveTo(0, -s * 1.6);
-                mapCtx.lineTo(-s * 0.7, s * 0.4);
-                mapCtx.lineTo(s * 0.7, s * 0.4);
-                mapCtx.closePath();
-                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.7)';
-                mapCtx.fill();
+                mapCtx.moveTo(0, -s*1.6); mapCtx.lineTo(-s*0.7, s*0.4); mapCtx.lineTo(s*0.7, s*0.4);
+                mapCtx.closePath(); mapCtx.fillStyle = 'rgba(231, 76, 60, 0.7)'; mapCtx.fill();
                 mapCtx.restore();
             }
         }
@@ -1280,284 +1216,37 @@
             }
             mapCtx.strokeStyle = 'rgba(52, 152, 219, 0.85)';
             mapCtx.lineWidth = Math.max(2, scale * 0.2);
-            mapCtx.lineCap = 'round';
-            mapCtx.lineJoin = 'round';
+            mapCtx.lineCap = 'round'; mapCtx.lineJoin = 'round';
             mapCtx.setLineDash([scale * 0.3, scale * 0.15]);
-            mapCtx.stroke();
-            mapCtx.setLineDash([]);
+            mapCtx.stroke(); mapCtx.setLineDash([]);
         }
 
         if (robotPose) {
             const p = worldToPixel(robotPose.x, robotPose.y);
             if (p) {
                 const ryaw = 2 * Math.atan2(robotPose.qz, robotPose.qw);
-                mapCtx.save();
-                mapCtx.translate(p.x, p.y);
-                mapCtx.rotate(-ryaw);
+                mapCtx.save(); mapCtx.translate(p.x, p.y); mapCtx.rotate(-ryaw);
                 const r = Math.max(4, scale * 0.12);
+                mapCtx.beginPath(); mapCtx.arc(0, 0, r, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.9)'; mapCtx.fill();
+                mapCtx.strokeStyle = '#fff'; mapCtx.lineWidth = 1.5; mapCtx.stroke();
                 mapCtx.beginPath();
-                mapCtx.arc(0, 0, r, 0, Math.PI * 2);
-                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.9)';
-                mapCtx.fill();
-                mapCtx.strokeStyle = '#fff';
-                mapCtx.lineWidth = 1.5;
-                mapCtx.stroke();
-                mapCtx.beginPath();
-                mapCtx.moveTo(0, -r * 1.5);
-                mapCtx.lineTo(-r * 0.8, r * 0.6);
-                mapCtx.lineTo(r * 0.8, r * 0.6);
-                mapCtx.closePath();
-                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.7)';
-                mapCtx.fill();
+                mapCtx.moveTo(0, -r*1.5); mapCtx.lineTo(-r*0.8, r*0.6); mapCtx.lineTo(r*0.8, r*0.6);
+                mapCtx.closePath(); mapCtx.fillStyle = 'rgba(39, 174, 96, 0.7)'; mapCtx.fill();
                 mapCtx.restore();
             }
         }
     }
 
-    const mapListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/map',
-        messageType: 'nav_msgs/msg/OccupancyGrid',
-        throttle_rate: 500
-    });
-
-    mapListener.subscribe(function(message) {
-        try {
-            const info = message.info;
-            const w = info.width;
-            const h = info.height;
-            const data = message.data;
-            if (!w || !h || !data) return;
-
-            mapInfo = {
-                width: w,
-                height: h,
-                resolution: info.resolution,
-                origin: info.origin
-            };
-
-            const imageData = mapCtx.createImageData(w, h);
-            const pixels = imageData.data;
-
-            for (let i = 0; i < data.length; i++) {
-                const val = typeof data[i] === 'number' ? data[i] : parseInt(data[i]);
-                const gx = i % w;
-                const gy = Math.floor(i / w);
-                const py = (h - 1 - gy) * w + gx;
-                const p = py * 4;
-                if (val === -1) {
-                    pixels[p]     = 0;
-                    pixels[p + 1] = 0;
-                    pixels[p + 2] = 0;
-                    pixels[p + 3] = 0;
-                } else if (val === 0) {
-                    pixels[p]     = 215;
-                    pixels[p + 1] = 230;
-                    pixels[p + 2] = 245;
-                    pixels[p + 3] = 255;
-                } else {
-                    const t = Math.min(val / 100, 1);
-                    pixels[p]     = Math.round(60 - t * 40);
-                    pixels[p + 1] = Math.round(60 - t * 40);
-                    pixels[p + 2] = Math.round(65 - t * 40);
-                    pixels[p + 3] = Math.round(200 + t * 55);
-                }
-            }
-
-            const tmpCanvas = document.createElement('canvas');
-            tmpCanvas.width = w;
-            tmpCanvas.height = h;
-            tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
-            mapImage = new Image();
-            mapImage.onload = () => {
-                const resolved = resolveBaseFootprint();
-                if (resolved) {
-                    if (resolved.translation) {
-                        robotPose = {
-                            x: resolved.translation.x, y: resolved.translation.y,
-                            qz: resolved.rotation.z, qw: resolved.rotation.w
-                        };
-                    } else {
-                        robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-                    }
-                }
-                drawMap();
-            };
-            mapImage.src = tmpCanvas.toDataURL();
-
-            mapPanel.classList.add('visible');
-            mapPlaceholder.classList.add('hidden');
-            mapStatus.textContent = `${w}x${h} | res: ${info.resolution}m`;
-        } catch (e) {
-            console.error('Error rendering map:', e);
-            mapStatus.textContent = 'render error: ' + e.message;
-        }
-    });
-
-    const tfCache = {};
-
-    function composeTransform(parent, child) {
-        const cy = 2 * Math.atan2(parent.rotation.z, parent.rotation.w);
-        return {
-            x: parent.translation.x + Math.cos(cy) * child.translation.x - Math.sin(cy) * child.translation.y,
-            y: parent.translation.y + Math.sin(cy) * child.translation.x + Math.cos(cy) * child.translation.y,
-            qz: child.rotation.z,
-            qw: child.rotation.w
-        };
-    }
-
-    function resolveBaseFootprint() {
-        const bf = tfCache['map->base_footprint'];
-        if (bf) return bf;
-
-        const mapOdom = tfCache['map->odom'];
-        const odomBf = tfCache['odom->base_footprint'];
-        if (mapOdom && odomBf) return composeTransform(mapOdom, odomBf);
-
-        return tfCache['odom->base_footprint'] || null;
-    }
-
-    function handleTfMessage(message) {
-        for (const tfMsg of message.transforms) {
-            const parent = tfMsg.header.frame_id;
-            const child = tfMsg.child_frame_id;
-            const key = `${parent}->${child}`;
-            tfCache[key] = {
-                translation: tfMsg.transform.translation,
-                rotation: tfMsg.transform.rotation
-            };
-        }
-
-        const resolved = resolveBaseFootprint();
-        if (resolved) {
-            if (resolved.translation) {
-                robotPose = {
-                    x: resolved.translation.x, y: resolved.translation.y,
-                    qz: resolved.rotation.z, qw: resolved.rotation.w
-                };
-            } else {
-                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-            }
-            drawMap();
-        }
-    }
-
-    const tfTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/tf',
-        messageType: 'tf2_msgs/msg/TFMessage'
-    });
-    tfTopic.subscribe(handleTfMessage);
-
-    const tfStaticTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/tf_static',
-        messageType: 'tf2_msgs/msg/TFMessage'
-    });
-    tfStaticTopic.subscribe(handleTfMessage);
-
-    setInterval(() => {
-        if (!mapInfo || !mapImage) return;
-        const resolved = resolveBaseFootprint();
-        if (resolved) {
-            if (resolved.translation) {
-                robotPose = {
-                    x: resolved.translation.x, y: resolved.translation.y,
-                    qz: resolved.rotation.z, qw: resolved.rotation.w
-                };
-            } else {
-                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-            }
-            drawMap();
-        }
-    }, 500);
-
-    const pathListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/planned_path',
-        messageType: 'nav_msgs/msg/Path'
-    });
-    pathListener.subscribe(function(message) {
-        if (message.poses && message.poses.length > 0) {
-            plannedPath = message.poses.map(function(p) {
-                return { x: p.pose.position.x, y: p.pose.position.y };
-            });
-        } else {
-            plannedPath = null;
-        }
-        drawMap();
-    });
-
-    const goalListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/goal_pose',
-        messageType: 'geometry_msgs/msg/PoseStamped'
-    });
-    goalListener.subscribe(function(message) {
-        goalPose = {
-            x: message.pose.position.x,
-            y: message.pose.position.y,
-            qz: message.pose.orientation.z,
-            qw: message.pose.orientation.w
-        };
-        drawMap();
-    });
-
-    function pixelToWorld(px, py) {
-        if (!mapInfo || !mapTransform) return null;
-        const res = mapInfo.resolution;
-        const ox = mapInfo.origin.position.x;
-        const oy = mapInfo.origin.position.y;
-        const gw = mapInfo.width;
-        const gh = mapInfo.height;
-        const ori = mapInfo.origin.orientation;
-
-        const gridX = (px - mapTransform.offsetX) / mapTransform.scale;
-        const gridY = gh - 1 - (py - mapTransform.offsetY) / mapTransform.scale;
-
-        let wx = ox + gridX * res;
-        let wy = oy + gridY * res;
-
-        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
-            const yaw = 2 * Math.atan2(ori.z, ori.w);
-            const c = Math.cos(yaw), s = Math.sin(yaw);
-            const rdx = gridX * res;
-            const rdy = gridY * res;
-            wx = ox + c * rdx - s * rdy;
-            wy = oy + s * rdx + c * rdy;
-        }
-
-        return { x: wx, y: wy };
-    }
-
-    const goalPublisher = new ROSLIB.Topic({
-        ros: ros,
-        name: '/goal_pose',
-        messageType: 'geometry_msgs/msg/PoseStamped'
-    });
-
     mapCanvas.addEventListener('click', function(e) {
         if (!mapInfo || !mapTransform) return;
-
         const dpr = window.devicePixelRatio || 1;
         const bodyRect = document.querySelector('#map-panel .map-body').getBoundingClientRect();
         const px = (e.clientX - bodyRect.left) * dpr;
         const py = (e.clientY - bodyRect.top) * dpr;
-
         const world = pixelToWorld(px, py);
         if (!world) return;
-
-        const goalMsg = new ROSLIB.Message({
-            header: {
-                stamp: { sec: 0, nanosec: 0 },
-                frame_id: 'map'
-            },
-            pose: {
-                position: { x: world.x, y: world.y, z: 0.0 },
-                orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
-            }
-        });
-        goalPublisher.publish(goalMsg);
+        sendCommand({ action: 'navigate', x: +world.x.toFixed(3), y: +world.y.toFixed(3) });
     });
 
     const mapExpandBtn = document.getElementById('map-expand-btn');
@@ -1567,17 +1256,14 @@
     function toggleMapExpand() {
         mapExpanded = !mapExpanded;
         mapPanel.classList.add('expanding');
-
         if (mapExpanded) {
             const rect = mapPanel.getBoundingClientRect();
             const targetW = window.innerWidth - 32;
             const targetH = window.innerHeight - 32;
             const ratio = Math.min(rect.width / targetW, rect.height / targetH);
-
             mapPanel.classList.add('expanded');
-            mapPanel.style.transform = `scale(${ratio})`;
+            mapPanel.style.transform = 'scale(' + ratio + ')';
             mapBackdrop.classList.add('visible');
-
             void mapPanel.offsetHeight;
             mapPanel.style.transform = '';
         } else {
@@ -1585,11 +1271,9 @@
             const smallW = Math.min(280, window.innerWidth * 0.4);
             const smallH = Math.min(280, window.innerHeight * 0.4);
             const ratio = Math.min(smallW / rect.width, smallH / rect.height);
-
             mapPanel.style.transformOrigin = 'bottom left';
-            mapPanel.style.transform = `scale(${ratio})`;
+            mapPanel.style.transform = 'scale(' + ratio + ')';
             mapBackdrop.classList.remove('visible');
-
             const onEnd = () => {
                 mapPanel.classList.remove('expanded', 'expanding');
                 mapPanel.style.transform = '';
@@ -1599,38 +1283,19 @@
             };
             mapPanel.addEventListener('transitionend', onEnd);
         }
-
         mapExpandBtn.innerHTML = mapExpanded
-            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                 <polyline points="4 14 10 14 10 20"/>
-                 <polyline points="20 10 14 10 14 4"/>
-                 <line x1="14" y1="10" x2="21" y2="3"/>
-                 <line x1="3" y1="21" x2="10" y2="14"/>
-               </svg>`
-            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                 <polyline points="15 3 21 3 21 9"/>
-                 <polyline points="9 21 3 21 3 15"/>
-                 <line x1="21" y1="3" x2="14" y2="10"/>
-                 <line x1="3" y1="21" x2="10" y2="14"/>
-               </svg>`;
-
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
         if (mapExpanded) setTimeout(drawMap, 520);
     }
 
-    mapExpandBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleMapExpand();
-    });
-
-    mapBackdrop.addEventListener('click', () => {
-        if (mapExpanded) toggleMapExpand();
-    });
+    mapExpandBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMapExpand(); });
+    mapBackdrop.addEventListener('click', () => { if (mapExpanded) toggleMapExpand(); });
 
     const mapBody = document.querySelector('#map-panel .map-body');
     const resizeObs = new ResizeObserver(() => { drawMap(); });
     resizeObs.observe(mapBody);
 
-    // Console panel
     const consolePanel = document.getElementById('console-panel');
     const consoleToggle = document.getElementById('console-toggle');
     const consoleBody = document.getElementById('console-body');
@@ -1643,7 +1308,8 @@
     let activeFilter = 'all';
     let activeNodeFilters = new Set();
     let autoScroll = true;
-    let logs = [];
+    let displayedLogs = [];
+    let knownLogIndex = 0;
 
     const fsBtn = document.getElementById('console-fullscreen-btn');
 
@@ -1668,7 +1334,7 @@
             filterBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeFilter = btn.dataset.level;
-            renderLogs();
+            renderConsoleLogs(displayedLogs);
         });
     });
 
@@ -1691,13 +1357,14 @@
                     document.querySelector('#console-node-filter .node-filter-btn[data-node="all"]').classList.add('active');
                 }
             }
-            renderLogs();
+            renderConsoleLogs(displayedLogs);
         });
     });
 
     consoleClear.addEventListener('click', (e) => {
         e.stopPropagation();
-        logs = [];
+        displayedLogs = [];
+        knownLogIndex = 0;
         logCount = 0;
         logCountEl.textContent = '0';
         consoleBody.innerHTML = '';
@@ -1720,8 +1387,9 @@
         return false;
     }
 
-    function renderLogs() {
+    function renderConsoleLogs(logs) {
         const fragment = document.createDocumentFragment();
+        let count = 0;
         logs.forEach(entry => {
             if (activeFilter !== 'all' && entry.level !== parseInt(activeFilter)) return;
             if (!matchesNodeFilter(entry.name)) return;
@@ -1731,56 +1399,90 @@
                 '<span class="log-name">' + entry.name + '</span>' +
                 '<span class="log-msg">' + entry.msg + '</span>';
             fragment.appendChild(el);
+            count++;
         });
         consoleBody.innerHTML = '';
         consoleBody.appendChild(fragment);
+        logCountEl.textContent = count;
         if (autoScroll) consoleBody.scrollTop = consoleBody.scrollHeight;
     }
 
-    const rosoutTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/rosout',
-        messageType: 'rcl_interfaces/msg/Log',
-        throttle_rate: 200
-    });
-
-    rosoutTopic.subscribe(function(message) {
-        const d = message.stamp ? new Date(message.stamp.sec * 1000 + Math.round(message.stamp.nanosec / 1e6)) : new Date();
-        const h = String(d.getHours()).padStart(2, '0');
-        const m = String(d.getMinutes()).padStart(2, '0');
-        const s = String(d.getSeconds()).padStart(2, '0');
-        const ms = String(d.getMilliseconds()).padStart(3, '0');
-        const time = h + ':' + m + ':' + s + '.' + ms;
-
-        const name = message.name || '';
-        const msg = message.msg || '';
-        const level = message.level || 20;
-
-        logs.push({ time, name, msg, level });
-        logCount++;
-        logCountEl.textContent = logCount;
-
-        if (logs.length > MAX_LOGS) {
-            logs.splice(0, logs.length - MAX_LOGS);
+    function processLogs(logs) {
+        const newEntries = logs.slice(knownLogIndex);
+        knownLogIndex = logs.length;
+        newEntries.forEach(entry => {
+            displayedLogs.push(entry);
+            if (displayedLogs.length > MAX_LOGS) displayedLogs.shift();
+        });
+        if (newEntries.length > 0) {
+            renderConsoleLogs(displayedLogs);
         }
+    }
 
-        if (activeFilter !== 'all' && level !== parseInt(activeFilter)) return;
-        if (!matchesNodeFilter(name)) return;
-
-        const el = document.createElement('div');
-        el.className = 'log-entry ' + levelClass(level);
-        el.innerHTML = '<span class="log-time">' + time + '</span>' +
-            '<span class="log-name">' + name + '</span>' +
-            '<span class="log-msg">' + msg + '</span>';
-
-        consoleBody.appendChild(el);
-
-        while (consoleBody.children.length > MAX_LOGS) {
-            consoleBody.removeChild(consoleBody.firstChild);
+    async function sendCommand(payload) {
+        try {
+            const response = await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            return await response.json();
+        } catch (error) {
+            return { ok: false };
         }
+    }
 
-        if (autoScroll) consoleBody.scrollTop = consoleBody.scrollHeight;
-    });
+    function connect() {
+        const source = new EventSource('/events');
+        source.addEventListener('state', (event) => {
+            try {
+                const snapshot = JSON.parse(event.data);
+
+                wsDot.className = 'ws-dot ws-connected';
+                wsText.textContent = 'CONNECTED';
+                wsText.style.color = '#16a34a';
+
+                const bs = snapshot.button_states || {};
+                buttonStates = bs;
+                isSequentialMode = bs.sequential_start === true;
+                unstuckState = bs.unstuck === true;
+                seqBanner.classList.toggle('visible', isSequentialMode);
+
+                nodesData = snapshot.node_states || {};
+
+                const mapData = snapshot.map;
+                if (mapData && mapData.width) {
+                    mapInfo = mapData;
+                    decodeMap(mapData);
+                    mapPanel.classList.add('visible');
+                    mapPlaceholder.classList.add('hidden');
+                    mapStatus.textContent = mapData.width + 'x' + mapData.height + ' | res: ' + mapData.resolution + 'm';
+                }
+
+                robotPose = snapshot.robot_pose || null;
+                plannedPath = snapshot.path || null;
+                goalPose = snapshot.goal || null;
+
+                if (snapshot.logs) processLogs(snapshot.logs);
+
+                renderGraph();
+                drawMap();
+            } catch (e) {
+                console.error('State parse error:', e);
+            }
+        });
+        source.onerror = () => {
+            wsDot.className = 'ws-dot ws-disconnected';
+            wsText.textContent = 'DISCONNECTED';
+            wsText.style.color = '#dc2626';
+            mapStatus.textContent = 'disconnected';
+            source.close();
+            setTimeout(connect, 1500);
+        };
+    }
+
+    window.addEventListener('resize', renderGraph);
+    connect();
 </script>
 </body>
 </html>
