@@ -5,3 +5,5 @@ data/
 ros2-documentation/
 plan.md
 AGENTS.MD
+__pycache__/
+*.pyc

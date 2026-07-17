@@ -58,11 +58,17 @@ class CubeWaypointNode(LifecycleNode):
 
     def _open_camera(self) -> bool:
         """Öffnet die Kamera und konfiguriert sie."""
+        self.get_logger().info('_open_camera: trying cv2.VideoCapture(0) ...')
         self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
+        opened = self.cap.isOpened()
+        self.get_logger().info(f'_open_camera: cv2.VideoCapture(0).isOpened() = {opened}')
+        if not opened:
+            self.get_logger().error('_open_camera: FAILED - camera not accessible')
             return False
+        self.get_logger().info('_open_camera: camera opened, setting frame size ...')
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+        self.get_logger().info(f'_open_camera: SUCCESS (frame={self.frame_width}x{self.frame_height})')
         return True
 
     def _create_video_writer(self):
@@ -72,39 +78,39 @@ class CubeWaypointNode(LifecycleNode):
             str(self.video_path), fourcc, 20.0, (self.frame_width, self.frame_height)
         )
 
-    def on_configure(self) -> None:
+    def on_configure(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
+        self.get_logger().info('on_configure: starting ...')
+        self.get_logger().info(f'on_configure: send_polar={self.send_polar_instead_of_xy}')
+
+        self.get_logger().info('on_configure: calling _open_camera ...')
         if not self._open_camera():
-            self.get_logger().error('Camera not found or not accessible!')
+            self.get_logger().error('on_configure: FAILED - camera not found or not accessible')
             return rclpy.lifecycle.TransitionCallbackReturn.FAILURE
 
+        self.get_logger().info('on_configure: calling _create_video_writer ...')
         self._create_video_writer()
+        self.get_logger().info('on_configure: video writer created')
 
         if self.send_polar_instead_of_xy:
-            self.publisher_ = self.create_publisher(TargetVector, '/target_vector', 10)
+            self.get_logger().info('on_configure: creating TargetVector publisher on /target_vector')
+            self.publisher_ = self.create_lifecycle_publisher(TargetVector, '/target_vector', 10)
             self.goal_pose_publisher_ = None
         else:
-            self.goal_pose_publisher_ = self.create_publisher(PoseStamped, '/goal_pose', 10)
+            self.get_logger().info('on_configure: creating PoseStamped publisher on /goal_pose')
+            self.goal_pose_publisher_ = self.create_lifecycle_publisher(PoseStamped, '/goal_pose', 10)
             self.publisher_ = None
 
-        # Core processing loop timer (20 Hz)
+        self.get_logger().info('on_configure: publisher created, creating timer ...')
         self.timer = self.create_timer(0.05, self.process_image_loop)
 
-        self.get_logger().info('Lifecycle Node configured.')
+        self.get_logger().info('on_configure: SUCCESS - Lifecycle Node configured.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
-    def on_activate(self) -> None:
-        if self.publisher_:
-            self.publisher_.on_activate()
-        if self.goal_pose_publisher_:
-            self.goal_pose_publisher_.on_activate()
+    def on_activate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self.get_logger().info('Lifecycle Node activated.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
-    def on_deactivate(self) -> None:
-        if self.publisher_:
-            self.publisher_.on_deactivate()
-        if self.goal_pose_publisher_:
-            self.goal_pose_publisher_.on_deactivate()
+    def on_deactivate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self.get_logger().info('Lifecycle Node deactivated.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
@@ -114,10 +120,10 @@ class CubeWaypointNode(LifecycleNode):
             self.destroy_timer(self.timer)
             self.timer = None
         if self.publisher_ is not None:
-            self.publisher_.on_cleanup()
+            self.destroy_lifecycle_publisher(self.publisher_)
             self.publisher_ = None
         if self.goal_pose_publisher_ is not None:
-            self.goal_pose_publisher_.on_cleanup()
+            self.destroy_lifecycle_publisher(self.goal_pose_publisher_)
             self.goal_pose_publisher_ = None
         if self.video_writer is not None:
             self.video_writer.release()
@@ -127,12 +133,12 @@ class CubeWaypointNode(LifecycleNode):
             self.cap = None
         cv2.destroyAllWindows()
 
-    def on_cleanup(self) -> None:
+    def on_cleanup(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self._cleanup_resources()
         self.get_logger().info('Lifecycle Node cleaned up.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
-    def on_shutdown(self, state) -> None:
+    def on_shutdown(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self._cleanup_resources()
         if self.path_x:
             self.plot_data()
