@@ -88,6 +88,14 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
+        self.STUCK_TIMEOUT = 3.0          # seconds
+        self.STUCK_DISTANCE = 0.05        # meters
+        self.REPLAN_ON_STUCK = True       # set false to stop instead
+        self.stuck_reference_x = None
+        self.stuck_reference_y = None
+        self.stuck_reference_time = None
+        self.WAS_STUCK = False
+
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
 
@@ -169,6 +177,25 @@ class Navigation(LifecycleNode):
             )
             self.has_pose = True
             self.last_pose_time = self.now_seconds()
+
+            now = self.now_seconds()
+            if self.stuck_reference_time is None:
+                self.stuck_reference_x = self.x
+                self.stuck_reference_y = self.y
+                self.stuck_reference_time = now
+            else:
+                moved = self.distance(
+                    self.x,
+                    self.y,
+                    self.stuck_reference_x,
+                    self.stuck_reference_y,
+                )
+
+                if moved >= self.STUCK_DISTANCE:
+                    self.stuck_reference_x = self.x
+                    self.stuck_reference_y = self.y
+                    self.stuck_reference_time = now
+
         except Exception as error:
             new_failure = self.tf_ok or self.tf_error == 'not_checked'
             self.tf_ok = False
@@ -608,6 +635,26 @@ class Navigation(LifecycleNode):
             )
             return
 
+        stuck = self.robot_is_stuck()
+        if stuck and not self.WAS_STUCK:
+            self.get_logger().warning("Robot is stuck")
+            if self.REPLAN_ON_STUCK:
+                self.WAS_STUCK = True
+                self.clear_planned_path(reset_planning_context=True)
+                return
+            else:
+                self.WAS_STUCK = True
+                self.set_status("stuck", "robot_not_moving")
+
+        if not stuck:
+            self.WAS_STUCK = False
+
+        if stuck and not self.REPLAN_ON_STUCK:
+            msg.linear = 0.0
+            msg.angular = 0.0
+            self.publisher.publish(msg)
+            return
+
         waypoint = self.next_waypoint()
         linear, angular = self.target_vector_to_waypoint(waypoint)
         msg.linear = linear
@@ -1025,6 +1072,14 @@ class Navigation(LifecycleNode):
 
     def clamp(self, value, minimum, maximum):
         return max(minimum, min(value, maximum))
+
+    def robot_is_stuck(self):
+        if self.stuck_reference_time is None:
+            return False
+        return (
+            self.now_seconds() - self.stuck_reference_time
+            > self.STUCK_TIMEOUT
+        )
 
 
 def main():

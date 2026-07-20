@@ -10,7 +10,7 @@ from rclpy.node import Node
 
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 
 from geometry_msgs.msg import TransformStamped
@@ -43,6 +43,10 @@ class ScanMatcherLocalization(Node):
         self.x = 1.0
         self.y = -1.0
         self.theta = 0.0
+
+        self.cov_x = 0.5
+        self.cov_y = 0.5
+        self.cov_theta = math.radians(20)
 
         # Latest odometry pose
         self.odom_x = 0.0
@@ -80,7 +84,7 @@ class ScanMatcherLocalization(Node):
         )
 
         self.pose_pub = self.create_publisher(
-            PoseStamped,
+            PoseWithCovarianceStamped,
             "/pos",
             10
         )
@@ -194,12 +198,19 @@ class ScanMatcherLocalization(Node):
 
 
         # localization correction
+        dx = self.x - self.odom_x
+        dy = self.y - self.odom_y
+
+        c = math.cos(self.odom_theta)
+        s = math.sin(self.odom_theta)
+
+
         tf.transform.translation.x = (
-            self.x - self.odom_x
+            c*dx + s*dy
         )
 
         tf.transform.translation.y = (
-            self.y - self.odom_y
+            -s*dx + c*dy
         )
 
         tf.transform.translation.z = 0.0
@@ -264,12 +275,38 @@ class ScanMatcherLocalization(Node):
                 self.theta + dtheta
             )
 
+
+            # Odometry increases uncertainty
+
+            motion = math.sqrt(
+                dx*dx + dy*dy
+            )
+
+            self.cov_x += motion * 0.05
+            self.cov_y += motion * 0.05
+            self.cov_theta += abs(dtheta)*0.1
+
             self.last_odom_x = self.odom_x
             self.last_odom_y = self.odom_y
             self.last_odom_theta = self.odom_theta
 
 
         beams = self.prepare_scan()
+
+        if self.cov_x > 5.0:
+
+            pose = self.random_global_search(
+                beams
+            )
+
+            if pose:
+                self.x = pose[0]
+                self.y = pose[1]
+                self.theta = pose[2]
+
+                self.cov_x = 1.0
+                self.cov_y = 1.0
+                self.cov_theta = math.radians(30)
 
 
         if len(beams) < 20:
@@ -328,6 +365,11 @@ class ScanMatcherLocalization(Node):
         self.theta = self.normalize_angle(
             pose[2]
         )
+
+        # Laser correction reduces uncertainty
+        self.cov_x *= 0.5
+        self.cov_y *= 0.5
+        self.cov_theta *= 0.5
 
     def prepare_scan(self):
 
@@ -538,9 +580,21 @@ class ScanMatcherLocalization(Node):
             )
         )
 
-        score -= 2.0 * math.hypot(
-            x - self.x,
-            y - self.y
+        score -= (
+            0.2 *
+            math.hypot(
+                x-self.x,
+                y-self.y
+            )
+        )
+
+        score -= (
+            0.05 *
+            abs(
+                self.normalize_angle(
+                    theta-self.theta
+                )
+            )
         )
 
         score -= 0.5 * abs(
@@ -555,33 +609,116 @@ class ScanMatcherLocalization(Node):
             math.cos(a)
         )
 
+#    def publish_pose(self):
+#
+#        msg = PoseStamped()
+#
+#        msg.header.frame_id="map"
+#
+#        msg.header.stamp=(
+#            self.get_clock()
+#            .now()
+#            .to_msg()
+#        )
+#
+#
+#        msg.pose.position.x=self.x
+#        msg.pose.position.y=self.y
+#
+#
+#        msg.pose.orientation.z=math.sin(
+#            self.theta/2
+#        )
+#
+#        msg.pose.orientation.w=math.cos(
+#            self.theta/2
+#        )
+#
+#
+#        self.pose_pub.publish(msg)
+        
     def publish_pose(self):
 
-        msg = PoseStamped()
+        msg = PoseWithCovarianceStamped()
 
-        msg.header.frame_id="map"
-
-        msg.header.stamp=(
+        msg.header.frame_id = "map"
+        msg.header.stamp = (
             self.get_clock()
             .now()
             .to_msg()
         )
 
+        msg.pose.pose.position.x = self.x
+        msg.pose.pose.position.y = self.y
 
-        msg.pose.position.x=self.x
-        msg.pose.position.y=self.y
-
-
-        msg.pose.orientation.z=math.sin(
-            self.theta/2
+        msg.pose.pose.orientation.z = math.sin(
+            self.theta / 2
         )
 
-        msg.pose.orientation.w=math.cos(
-            self.theta/2
+        msg.pose.pose.orientation.w = math.cos(
+            self.theta / 2
         )
+
+
+        covariance = [0.0] * 36
+
+        covariance[0] = self.cov_x
+        covariance[7] = self.cov_y
+        covariance[35] = self.cov_theta
+
+
+        msg.pose.covariance = covariance
 
 
         self.pose_pub.publish(msg)
+
+
+    def random_global_search(self, beams):
+
+        best_score = -99999
+        best_pose = None
+
+
+        for _ in range(500):
+
+            x = np.random.uniform(
+                self.origin_x,
+                self.origin_x +
+                self.map_width*self.resolution
+            )
+
+            y = np.random.uniform(
+                self.origin_y,
+                self.origin_y +
+                self.map_height*self.resolution
+            )
+
+            theta = np.random.uniform(
+                -math.pi,
+                math.pi
+            )
+
+
+            score = self.score_pose(
+                x,
+                y,
+                theta,
+                beams
+            )
+
+
+            if score > best_score:
+
+                best_score = score
+
+                best_pose = (
+                    x,
+                    y,
+                    theta
+                )
+
+
+        return best_pose
 
 
 
