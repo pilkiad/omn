@@ -97,6 +97,7 @@ class Navigation(LifecycleNode):
         self.stuck_reference_y = None
         self.stuck_reference_time = None
         self.WAS_STUCK = False
+        self.STUCK_TOGGLE = False
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
@@ -503,6 +504,8 @@ class Navigation(LifecycleNode):
         self.last_goal_time = self.now_seconds()
         self.clear_planned_path(reset_planning_context=True)
 
+        self.STUCK_TOGGLE = False
+
     def publish_planned_path(self):
         if not self.path_publisher.is_activated:
             return
@@ -683,6 +686,7 @@ class Navigation(LifecycleNode):
             # ------------------
 
             self.publish_planned_path()
+            self.STUCK_TOGGLE = True
 
         if not self.path:
             self.get_logger().warning(
@@ -694,8 +698,8 @@ class Navigation(LifecycleNode):
                 self.no_path_reason(start, goal),
             )
             return
-        last_linear = 0
-        if last_linear != 0:
+        
+        if self.STUCK_TOGGLE:
             stuck = self.robot_is_stuck()
             if stuck and not self.WAS_STUCK:
                 self.get_logger().warning("Robot is stuck")
@@ -720,8 +724,6 @@ class Navigation(LifecycleNode):
         msg.angular = angular
         self.publisher.publish(msg)
         self.set_status('tracking')
-
-        last_linear = linear
 
     def ready_to_plan(self):
         return self.has_map and self.has_pose and self.has_goal
