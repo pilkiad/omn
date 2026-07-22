@@ -90,7 +90,7 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 3.0          # seconds
+        self.STUCK_TIMEOUT = 1.5         # seconds
         self.STUCK_DISTANCE = 0.05        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
@@ -676,10 +676,10 @@ class Navigation(LifecycleNode):
             # --- NEUE LOGIK ---
             # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches 
             # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
-            self.stuck_reference_x = self.x
-            self.stuck_reference_y = self.y
-            self.stuck_reference_time = self.now_seconds()
-            self.WAS_STUCK = False
+            #self.stuck_reference_x = self.x
+            #self.stuck_reference_y = self.y
+            #self.stuck_reference_time = self.now_seconds()
+            #self.WAS_STUCK = False
             # ------------------
 
             self.publish_planned_path()
@@ -694,24 +694,25 @@ class Navigation(LifecycleNode):
                 self.no_path_reason(start, goal),
             )
             return
+        last_linear = 0
+        if last_linear != 0:
+            stuck = self.robot_is_stuck()
+            if stuck and not self.WAS_STUCK:
+                self.get_logger().warning("Robot is stuck")
+                self.WAS_STUCK = True
+                self.set_status('stuck', 'robot_not_moving')
+                if self.REPLAN_ON_STUCK:
+                    self.clear_planned_path(reset_planning_context=True)
+                    return
 
-        stuck = self.robot_is_stuck()
-        if stuck and not self.WAS_STUCK:
-            self.get_logger().warning("Robot is stuck")
-            self.WAS_STUCK = True
-            self.set_status('stuck', 'robot_not_moving')
-            if self.REPLAN_ON_STUCK:
-                self.clear_planned_path(reset_planning_context=True)
+            if not stuck:
+                self.WAS_STUCK = False
+
+            if stuck and not self.REPLAN_ON_STUCK:
+                msg.linear = 0.0
+                msg.angular = 0.0
+                self.publisher.publish(msg)
                 return
-
-        if not stuck:
-            self.WAS_STUCK = False
-
-        if stuck and not self.REPLAN_ON_STUCK:
-            msg.linear = 0.0
-            msg.angular = 0.0
-            self.publisher.publish(msg)
-            return
 
         waypoint = self.next_waypoint()
         linear, angular = self.target_vector_to_waypoint(waypoint)
@@ -719,6 +720,8 @@ class Navigation(LifecycleNode):
         msg.angular = angular
         self.publisher.publish(msg)
         self.set_status('tracking')
+
+        last_linear = linear
 
     def ready_to_plan(self):
         return self.has_map and self.has_pose and self.has_goal
