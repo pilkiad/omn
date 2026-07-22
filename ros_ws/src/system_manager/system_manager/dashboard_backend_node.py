@@ -175,6 +175,10 @@ class DashboardBackendNode(Node):
         except ImportError:
             self.get_logger().warn('tf2_msgs not available, robot pose disabled')
 
+        self.latest_nav_status = None
+        self.create_subscription(
+            String, '/navigation_status', self.nav_status_callback, 10)
+
         self.goal_pub = self.create_publisher(
             PoseStamped, '/goal_pose', 10)
 
@@ -285,6 +289,7 @@ class DashboardBackendNode(Node):
             "robot_pose": self.latest_robot_pose,
             "path": self.latest_path,
             "goal": self.latest_goal,
+            "navigation_status": self.latest_nav_status,
         }
 
     def get_map(self):
@@ -516,6 +521,9 @@ class DashboardBackendNode(Node):
             'x': msg.pose.position.x, 'y': msg.pose.position.y,
             'qz': msg.pose.orientation.z, 'qw': msg.pose.orientation.w
         }
+
+    def nav_status_callback(self, msg):
+        self.latest_nav_status = msg.data
 
     def command_callback(self, msg):
         """Callback für Befehle aus der Web-GUI mit Schutz-Matrix & State-Machine."""
