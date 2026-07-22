@@ -1,0 +1,18 @@
+exploration:
+    blind exploration:  Arian
+
+collision avoidance:    Arian
+
+navigation:
+    navigation logic:   Nasim
+    path smoothing:     Nils
+    stuck logic:        Nils
+    goal queue:         Nigora
+
+slam:                   Omar
+
+manager:                Sharif, Bashar, Omar
+
+follow red cube:        Tom
+
+localization(in sim):   Nils
