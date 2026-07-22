@@ -209,6 +209,17 @@
             opacity: 0.25;
         }
 
+        /* NEU: Neutral/Grau Zustand für Nodes ohne Status (Roboclaw & URG Node) */
+        .node-neutral .node-body {
+            border-color: rgba(140, 140, 150, 0.3);
+            box-shadow: 0 2px 12px rgba(140, 140, 150, 0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.85);
+        }
+        .node-neutral .node-body::before {
+            background: conic-gradient(from 0deg, rgba(140,140,150,0.2), transparent, transparent, rgba(140,140,150,0.2));
+            opacity: 0.2;
+        }
+
         .node-icon {
             width: 30px; height: 30px;
             color: #9898ac;
@@ -217,6 +228,7 @@
         .node-active .node-icon { color: #16a34a; }
         .node-configuring .node-icon { color: #ca8a04; }
         .node-unconfigured .node-icon { color: #dc2626; }
+        .node-neutral .node-icon { color: #8888a0; }
 
         .led-core {
             width: 16px; height: 16px;
@@ -235,6 +247,10 @@
             background: #ef4444;
             box-shadow: 0 0 8px #ef4444, 0 0 20px rgba(239,68,68,0.25);
         }
+        .node-neutral .led-core {
+            background: #8888a0;
+            box-shadow: 0 0 8px #8888a0, 0 0 20px rgba(140,140,150,0.2);
+        }
 
         .node-label {
             font-size: 0.958rem;
@@ -250,6 +266,7 @@
         .node-active .node-label { color: #15803d; }
         .node-configuring .node-label { color: #a16207; }
         .node-unconfigured .node-label { color: #b91c1c; }
+        .node-neutral .node-label { color: #6b6b80; }
 
         .node-state-badge {
             font-size: 0.948rem;
@@ -277,7 +294,11 @@
             border-color: rgba(239,68,68,0.15);
             background: rgba(239,68,68,0.04);
         }
-
+        .node-neutral .node-state-badge {
+            color: #6b6b80;
+            border-color: rgba(140,140,150,0.2);
+            background: rgba(140,140,150,0.08);
+        }
 
         .pulse-ring {
             position: absolute;
@@ -607,21 +628,24 @@
         return 'node-unconfigured';
     }
 
+    // Verbesserter Filter: Verhindert Überlappung bei "slam_toolbox"
     function getShortName(name) {
+        if (name.toLowerCase().includes('slam')) return 'slam';
         let parts = name.split('/');
         let last = parts[parts.length - 1] || parts[parts.length - 2];
         return last.replace(/_/g, '\n');
     }
 
+    // Koordinaten korrigiert: Mehr Abstand (Gap) zwischen collision_avoidance und roboclaw
     const TOPOLOGY = {
-        'urg_node_2':              { x: 0.6, y: 0.2 },
-        'slam':                    { x: 0.4, y: 0.2 },
-        'exploration':             { x: 0.3, y: 0.35 },
-        'follow_red':              { x: 0.5, y: 0.35 },
-        'navigation':              { x: 0.4, y: 0.52 },
-        'blind_exploration':       { x: 0.6, y: 0.52 },
+        'urg_node_2':              { x: 0.6, y: 0.18 },
+        'slam':                    { x: 0.4, y: 0.18 },
+        'exploration':             { x: 0.3, y: 0.36 },
+        'follow_red':              { x: 0.5, y: 0.36 },
+        'navigation':              { x: 0.4, y: 0.54 },
+        'blind_exploration':       { x: 0.6, y: 0.54 },
         'collision_avoidance':     { x: 0.50, y: 0.72 },
-        'roboclaw':                { x: 0.50, y: 0.90 },
+        'roboclaw':                { x: 0.50, y: 0.92 }, // Erhöhter Abstand verhindert Überlappung
     };
 
     const EDGES = [
@@ -752,9 +776,18 @@
 
         for (const key of allKeys) {
             const state = nodesData[key];
-            const stateClass = getStateClass(state);
+            let stateClass = getStateClass(state);
+            let badgeText = (state || 'OFFLINE').toUpperCase();
+            
+            const topoKey = matchTopologyKey(key);
             const pos = positions[key];
             if (!pos) continue;
+
+            // Logik-Injection: Mache statuslose Nodes (Roboclaw und URG) permanent neutral/grau
+            if (topoKey === 'urg_node_2' || topoKey === 'roboclaw') {
+                stateClass = 'node-neutral';
+                badgeText = 'N/A';
+            }
 
             if (nodeElements[key]) {
                 const el = nodeElements[key];
@@ -762,9 +795,8 @@
                 el.style.top = pos.y + 'px';
                 el.className = 'node ' + stateClass;
                 const badgeEl = el.querySelector('.node-state-badge');
-                badgeEl.textContent = (state || 'OFFLINE').toUpperCase();
+                badgeEl.textContent = badgeText;
             } else {
-                const topoKey = matchTopologyKey(key);
                 const isSlam = topoKey === 'slam';
                 const isRoboclaw = topoKey === 'roboclaw';
                 const isUrg = topoKey === 'urg_node_2';
@@ -799,7 +831,7 @@
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
                 el.style.opacity = '0';
-                const badgeText = (state || 'OFFLINE').toUpperCase();
+                
                 el.innerHTML =
                     '<div class="node-body">' +
                         '<div class="node-click-flash">' +
