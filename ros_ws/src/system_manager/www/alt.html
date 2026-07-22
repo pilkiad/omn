@@ -100,6 +100,7 @@
             transition: all 0.35s ease;
             opacity: 0;
             transform: translateY(8px);
+            pointer-events: none;
         }
         #nav-msg.visible {
             opacity: 1;
@@ -149,6 +150,7 @@
             transition: all 0.35s ease;
             opacity: 0;
             transform: translateY(8px);
+            pointer-events: none;
         }
         #exp-msg.visible {
             opacity: 1;
@@ -194,6 +196,7 @@
             transition: all 0.35s ease;
             opacity: 0;
             transform: translateY(8px);
+            pointer-events: none;
         }
         #tv-msg.visible {
             opacity: 1;
@@ -670,6 +673,141 @@
             pointer-events: none;
         }
 
+        #console-panel {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            width: min(420px, 42vw);
+            height: min(240px, 32vh);
+            border-radius: 18px;
+            background: rgba(24,24,30,0.85);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.07),
+                        inset 0 1px 0 rgba(255,255,255,0.05);
+            z-index: 6;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
+            transition: top 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                        left 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                        right 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                        bottom 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                        width 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+                        height 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        #console-panel.collapsed {
+            height: auto;
+        }
+        #console-panel.collapsed #console-body {
+            display: none;
+        }
+        #console-panel.wide {
+            top: 24px;
+            left: 24px;
+            right: 24px;
+            bottom: 24px;
+            width: auto;
+            height: auto;
+            z-index: 100;
+        }
+        #console-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.18);
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+            z-index: 99;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        #console-backdrop.visible {
+            opacity: 0.8;
+            pointer-events: auto;
+        }
+        .console-icon-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 7px;
+            width: 26px;
+            height: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #9898ac;
+            transition: all 0.2s ease;
+        }
+        .console-icon-btn:hover {
+            border-color: rgba(255,255,255,0.2);
+            color: #fff;
+            background: rgba(255,255,255,0.1);
+        }
+        .console-icon-btn svg {
+            width: 13px;
+            height: 13px;
+        }
+        #console-panel .console-header {
+            padding: 10px 14px 6px;
+            font-size: 0.952rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: #9898ac;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .console-clear-btn {
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 7px;
+            height: 26px;
+            padding: 0 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #9898ac;
+            transition: all 0.2s ease;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .console-clear-btn:hover {
+            border-color: rgba(239,68,68,0.4);
+            color: #f87171;
+            background: rgba(239,68,68,0.1);
+        }
+        .console-clear-btn.paused {
+            border-color: rgba(234,179,8,0.4);
+            color: #eab308;
+            background: rgba(234,179,8,0.1);
+        }
+        #console-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 14px 12px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.78rem;
+            line-height: 1.5;
+        }
+        .console-line {
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #c8c8d4;
+        }
+        .console-line.stderr { color: #f87171; }
+        .console-line.system { color: #60a5fa; font-style: italic; }
+        .console-line .console-node {
+            color: #6b6b80;
+            margin-right: 6px;
+        }
+
         @media (max-width: 600px) {
             .node-body { width: 64px; height: 64px; border-radius: 18px; }
             .node-label { font-size: 0.95rem; max-width: 80px; }
@@ -744,6 +882,19 @@
         <canvas id="map-canvas"></canvas>
     </div>
 </div>
+<div id="console-backdrop"></div>
+<div id="console-panel">
+    <div class="console-header">
+        Console
+        <div style="display:flex;gap:6px;align-items:center;">
+            <button class="console-icon-btn" id="console-wide-btn" title="Widen console"></button>
+            <button class="console-clear-btn" id="console-pause-btn" title="Pause console output">Pause</button>
+            <button class="console-clear-btn" id="console-clear-btn" title="Clear log">Clear</button>
+            <button class="console-icon-btn" id="console-toggle-btn" title="Hide console"></button>
+        </div>
+    </div>
+    <div id="console-body"></div>
+</div>
 <div id="no-data">Waiting for node data...</div>
 
 <script>
@@ -757,6 +908,13 @@
     const mapPlaceholder = document.getElementById('map-placeholder');
     const mapStatus = document.getElementById('map-status');
     const mapCtx = mapCanvas.getContext('2d');
+    const consolePanel = document.getElementById('console-panel');
+    const consoleBody = document.getElementById('console-body');
+    const consoleClearBtn = document.getElementById('console-clear-btn');
+    const consolePauseBtn = document.getElementById('console-pause-btn');
+    const consoleToggleBtn = document.getElementById('console-toggle-btn');
+    const consoleWideBtn = document.getElementById('console-wide-btn');
+    const consoleBackdrop = document.getElementById('console-backdrop');
 
     let nodesData = {};
     let nodeElements = {};
@@ -1260,6 +1418,76 @@
         fetchMap();
     });
 
+    const MAX_CONSOLE_LINES = 500;
+
+    function appendLogLine(entry) {
+        const line = document.createElement('div');
+        line.className = 'console-line ' + (entry.stream || 'stdout');
+        const nodeSpan = document.createElement('span');
+        nodeSpan.className = 'console-node';
+        nodeSpan.textContent = '[' + entry.node + ']';
+        line.appendChild(nodeSpan);
+        line.appendChild(document.createTextNode(entry.text));
+        consoleBody.appendChild(line);
+        while (consoleBody.children.length > MAX_CONSOLE_LINES) {
+            consoleBody.removeChild(consoleBody.firstChild);
+        }
+        consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+
+    consoleClearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        consoleBody.innerHTML = '';
+    });
+
+    let consolePaused = false;
+    function setConsolePaused(paused) {
+        consolePaused = paused;
+        consolePauseBtn.classList.toggle('paused', paused);
+        consolePauseBtn.textContent = paused ? 'Resume' : 'Pause';
+        consolePauseBtn.title = paused ? 'Resume console output' : 'Pause console output';
+    }
+    consolePauseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setConsolePaused(!consolePaused);
+    });
+
+    let consoleCollapsed = false;
+    function setConsoleCollapsed(collapsed) {
+        consoleCollapsed = collapsed;
+        consolePanel.classList.toggle('collapsed', collapsed);
+        consoleToggleBtn.title = collapsed ? 'Show console' : 'Hide console';
+        consoleToggleBtn.innerHTML = collapsed
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
+        if (!collapsed) consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+    consoleToggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setConsoleCollapsed(!consoleCollapsed);
+    });
+    setConsoleCollapsed(true);
+
+    let consoleWide = false;
+    function setConsoleWide(wide) {
+        consoleWide = wide;
+        consolePanel.classList.toggle('wide', wide);
+        consoleBackdrop.classList.toggle('visible', wide);
+        consoleWideBtn.title = wide ? 'Exit fullscreen' : 'Widen console (fullscreen)';
+        consoleWideBtn.innerHTML = wide
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+        if (wide) setConsoleCollapsed(false);
+    }
+    consoleWideBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setConsoleWide(!consoleWide);
+    });
+    consoleBackdrop.addEventListener('click', () => {
+        if (consoleWide) setConsoleWide(false);
+    });
+    setConsoleWide(false);
+
     function connect() {
         const source = new EventSource('/events');
         source.addEventListener('state', (event) => {
@@ -1340,6 +1568,14 @@
                 drawMap();
             } catch (e) {
                 console.error('State parse error:', e);
+            }
+        });
+        source.addEventListener('log', (event) => {
+            if (consolePaused) return;
+            try {
+                appendLogLine(JSON.parse(event.data));
+            } catch (e) {
+                console.error('Log parse error:', e);
             }
         });
         source.onerror = () => {
