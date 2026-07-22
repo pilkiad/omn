@@ -161,6 +161,7 @@ class Exploration(LifecycleNode):
             self.set_status('inactive')
             return
 
+        self.set_status('exploring')
         self.flood_fill()
         self.get_logger().info("Searching for best exploration spot...")
 
@@ -243,8 +244,6 @@ class Exploration(LifecycleNode):
             self.get_logger().info("Cannot explore: no suitable position")
             self.set_status('inactive')
             return
-
-        self.set_status('exploring')
 
         # Send the desired position over to navigation
         self.marker_positions = target_positions
