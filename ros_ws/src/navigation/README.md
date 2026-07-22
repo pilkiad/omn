@@ -55,6 +55,7 @@ and `target_vector_to_cmd_vel` converts that into `/cmd_vel`.
 |---|---|---|---|
 | `/target_vector` | `collision_interfaces/msg/TargetVector` | `target_vector_to_cmd_vel`, optional `collision_avoidance` | Desired linear and angular motion. |
 | `/planned_path` | `nav_msgs/msg/Path` | RViz or other visualizers | Current planned path in the map frame. |
+| `/navigation_status` | `std_msgs/msg/String` | Supervisors and user interfaces | Current navigation state, published on changes with reliable transient-local QoS. |
 | `/rosout` | `rcl_interfaces/msg/Log` | ROS logging | Runtime logs, including planning and goal status. |
 | `/parameter_events` | `rcl_interfaces/msg/ParameterEvent` | ROS parameter system | Standard ROS parameter events. |
 
@@ -64,6 +65,11 @@ and `target_vector_to_cmd_vel` converts that into `/cmd_vel`.
 float64 linear
 float64 angular
 ```
+
+`/navigation_status` publishes one of `idle`, `waiting_for_map`,
+`waiting_for_pose`, `planning`, `tracking`, `stuck`, `no_path`, `outside_map`,
+or `goal_succeeded`. When stuck detection triggers, the node publishes `stuck`
+before attempting its configured automatic replan.
 
 ## Full Runtime Graph
 
@@ -176,6 +182,12 @@ Watch the navigation command:
 
 ```bash
 ros2 topic echo /target_vector
+```
+
+Watch navigation state changes:
+
+```bash
+ros2 topic echo /navigation_status
 ```
 
 Watch the converted robot command:

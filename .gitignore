@@ -5,3 +5,8 @@ data/
 ros2-documentation/
 plan.md
 AGENTS.MD
+__pycache__/
+*.pyc
+ros_ws/debug_output.mp4
+ros_ws/tracking_performance.png
+ros_ws/debug_output.mp4

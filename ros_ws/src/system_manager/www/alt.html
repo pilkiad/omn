@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Node Status Graph</title>
-    <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -56,6 +55,184 @@
             font-size: 0.97rem;
             font-weight: 600;
             letter-spacing: 1.2px;
+        }
+
+        .slam-stats {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .slam-stat {
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            padding: 3px 10px;
+            border-radius: 8px;
+            background: rgba(0,0,0,0.04);
+            border: 1px solid rgba(0,0,0,0.06);
+            color: #8888a0;
+            white-space: nowrap;
+        }
+        .slam-stat .val {
+            font-variant-numeric: tabular-nums;
+            margin-left: 4px;
+        }
+        .slam-stat.confidence .val { color: #3b82f6; }
+        .slam-stat.frontier .val { color: #16a34a; }
+        .slam-stat.growth .val { color: #d97706; }
+
+        #nav-msg {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 10;
+            padding: 10px 18px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.78);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            color: #6b6b80;
+            transition: all 0.35s ease;
+            opacity: 0;
+            transform: translateY(8px);
+        }
+        #nav-msg.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        #nav-msg .nav-tag {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 2px 7px;
+            border-radius: 6px;
+            margin-right: 8px;
+            vertical-align: middle;
+            background: rgba(124,58,237,0.1);
+            color: #7c3aed;
+        }
+        #nav-msg.state-idle .nav-tag { background: rgba(0,0,0,0.05); color: #8888a0; }
+        #nav-msg.state-tracking .nav-tag { background: rgba(34,197,94,0.1); color: #16a34a; }
+        #nav-msg.state-planning .nav-tag { background: rgba(59,130,246,0.1); color: #3b82f6; }
+        #nav-msg.state-error .nav-tag { background: rgba(239,68,68,0.1); color: #dc2626; }
+        #nav-msg.state-success .nav-tag { background: rgba(22,163,74,0.1); color: #16a34a; }
+        #nav-msg.state-waiting .nav-tag { background: rgba(234,179,8,0.1); color: #a16207; }
+
+        #exp-msg {
+            position: fixed;
+            bottom: 52px;
+            right: 16px;
+            z-index: 10;
+            padding: 10px 18px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.78);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            color: #6b6b80;
+            transition: all 0.35s ease;
+            opacity: 0;
+            transform: translateY(8px);
+        }
+        #exp-msg.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        #exp-msg .exp-tag {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 2px 7px;
+            border-radius: 6px;
+            margin-right: 8px;
+            vertical-align: middle;
+            background: rgba(124,58,237,0.1);
+            color: #7c3aed;
+        }
+        #exp-msg.state-inactive .exp-tag { background: rgba(0,0,0,0.05); color: #8888a0; }
+        #exp-msg.state-waiting .exp-tag { background: rgba(234,179,8,0.1); color: #a16207; }
+        #exp-msg.state-exploring .exp-tag { background: rgba(34,197,94,0.1); color: #16a34a; }
+
+        #tv-msg {
+            position: fixed;
+            bottom: 88px;
+            right: 16px;
+            z-index: 10;
+            padding: 10px 18px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.78);
+            border: 1px solid rgba(0,0,0,0.06);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.9);
+            backdrop-filter: blur(20px) saturate(1.3);
+            -webkit-backdrop-filter: blur(20px) saturate(1.3);
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 0.4px;
+            color: #6b6b80;
+            transition: all 0.35s ease;
+            opacity: 0;
+            transform: translateY(8px);
+        }
+        #tv-msg.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        #tv-msg .tv-tag {
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            padding: 2px 7px;
+            border-radius: 6px;
+            margin-right: 8px;
+            vertical-align: middle;
+            background: rgba(59,130,246,0.1);
+            color: #3b82f6;
+        }
+        #tv-msg .tv-val {
+            font-variant-numeric: tabular-nums;
+        }
+
+        .header-action-btn {
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            padding: 4px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(0,0,0,0.08);
+            background: rgba(0,0,0,0.03);
+            color: #8888a0;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .header-action-btn:hover {
+            background: rgba(124,58,237,0.08);
+            border-color: rgba(124,58,237,0.25);
+            color: #7c3aed;
+        }
+        .header-action-btn.active {
+            background: rgba(34,197,94,0.1);
+            border-color: rgba(34,197,94,0.3);
+            color: #16a34a;
+        }
+        .header-action-btn.unstuck-on {
+            background: rgba(234,179,8,0.1);
+            border-color: rgba(234,179,8,0.3);
+            color: #d97706;
         }
 
         .ws-dot {
@@ -158,6 +335,17 @@
             opacity: 0.25;
         }
 
+        /* NEU: Neutral/Grau Zustand für Nodes ohne Status (Roboclaw & URG Node) */
+        .node-neutral .node-body {
+            border-color: rgba(140, 140, 150, 0.3);
+            box-shadow: 0 2px 12px rgba(140, 140, 150, 0.08),
+                        inset 0 1px 0 rgba(255,255,255,0.85);
+        }
+        .node-neutral .node-body::before {
+            background: conic-gradient(from 0deg, rgba(140,140,150,0.2), transparent, transparent, rgba(140,140,150,0.2));
+            opacity: 0.2;
+        }
+
         .node-icon {
             width: 30px; height: 30px;
             color: #9898ac;
@@ -166,6 +354,7 @@
         .node-active .node-icon { color: #16a34a; }
         .node-configuring .node-icon { color: #ca8a04; }
         .node-unconfigured .node-icon { color: #dc2626; }
+        .node-neutral .node-icon { color: #8888a0; }
 
         .led-core {
             width: 16px; height: 16px;
@@ -184,6 +373,10 @@
             background: #ef4444;
             box-shadow: 0 0 8px #ef4444, 0 0 20px rgba(239,68,68,0.25);
         }
+        .node-neutral .led-core {
+            background: #8888a0;
+            box-shadow: 0 0 8px #8888a0, 0 0 20px rgba(140,140,150,0.2);
+        }
 
         .node-label {
             font-size: 0.958rem;
@@ -199,6 +392,7 @@
         .node-active .node-label { color: #15803d; }
         .node-configuring .node-label { color: #a16207; }
         .node-unconfigured .node-label { color: #b91c1c; }
+        .node-neutral .node-label { color: #6b6b80; }
 
         .node-state-badge {
             font-size: 0.948rem;
@@ -226,50 +420,10 @@
             border-color: rgba(239,68,68,0.15);
             background: rgba(239,68,68,0.04);
         }
-
-
-        .node-seq-start .node-body {
-            width: auto;
-            height: auto;
-            padding: 12px 22px;
-            border-radius: 24px;
-            background: rgba(124, 58, 237, 0.08);
-            border: 1px solid rgba(124, 58, 237, 0.2);
-            color: #2d2d3a;
-            gap: 8px;
-            flex-direction: row;
-            box-shadow: 0 2px 14px rgba(124, 58, 237, 0.08),
-                        inset 0 1px 0 rgba(255,255,255,0.85);
-        }
-        .node-seq-start .node-body::before { display: none; }
-        .node-seq-start:hover .node-body {
-            border-color: rgba(124, 58, 237, 0.35);
-            box-shadow: 0 4px 20px rgba(124, 58, 237, 0.12);
-            transform: scale(1.04);
-        }
-        .node-seq-start .node-icon { width: 18px; height: 18px; color: #7c3aed; }
-        .node-seq-start .node-label {
-            color: #6d28d9;
-            font-size: 0.962rem;
-            letter-spacing: 1px;
-            white-space: nowrap;
-        }
-        .node-seq-start .node-state-badge { display: none; }
-        .node-seq-start .pulse-ring { display: none; }
-
-        .node-seq-start.seq-running .node-body {
-            background: rgba(34, 197, 94, 0.08);
-            border-color: rgba(34, 197, 94, 0.3);
-            box-shadow: 0 2px 18px rgba(34, 197, 94, 0.12),
-                        0 0 40px rgba(34, 197, 94, 0.04);
-            animation: seq-pulse-glow 2.5s ease-in-out infinite;
-        }
-        .node-seq-start.seq-running .node-icon { color: #16a34a; }
-        .node-seq-start.seq-running .node-label { color: #15803d; }
-
-        @keyframes seq-pulse-glow {
-            0%, 100% { box-shadow: 0 2px 18px rgba(34,197,94,0.12), 0 0 40px rgba(34,197,94,0.04); }
-            50%      { box-shadow: 0 4px 24px rgba(34,197,94,0.2), 0 0 50px rgba(34,197,94,0.08); }
+        .node-neutral .node-state-badge {
+            color: #6b6b80;
+            border-color: rgba(140,140,150,0.2);
+            background: rgba(140,140,150,0.08);
         }
 
         .pulse-ring {
@@ -346,31 +500,6 @@
             color: #aaa;
             font-size: 0.985rem;
             letter-spacing: 1px;
-        }
-
-        .seq-banner {
-            position: fixed;
-            top: 52px; left: 0; right: 0;
-            z-index: 9;
-            text-align: center;
-            padding: 8px 0;
-            font-size: 0.965rem;
-            font-weight: 700;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: #7c3aed;
-            background: rgba(124, 58, 237, 0.07);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border-bottom: 1px solid rgba(124, 58, 237, 0.12);
-            transform: translateY(-100%);
-            opacity: 0;
-            transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1), opacity 0.4s ease;
-            pointer-events: none;
-        }
-        .seq-banner.visible {
-            transform: translateY(0);
-            opacity: 1;
         }
 
         #map-panel {
@@ -472,6 +601,32 @@
             width: 13px;
             height: 13px;
         }
+        .map-fetch-btn {
+            background: rgba(0,0,0,0.03);
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 7px;
+            height: 26px;
+            padding: 0 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: #8888a0;
+            transition: all 0.2s ease;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .map-fetch-btn:hover {
+            border-color: rgba(34,197,94,0.3);
+            color: #16a34a;
+            background: rgba(34,197,94,0.06);
+        }
+        .map-fetch-btn.loading {
+            opacity: 0.5;
+            pointer-events: none;
+        }
         #map-panel .map-body {
             flex: 1;
             position: relative;
@@ -514,201 +669,8 @@
             #map-panel { width: min(220px, 50vw); height: min(220px, 50vw); }
         }
 
-        #console-panel {
-            position: fixed;
-            bottom: 0; right: 0;
-            width: 820px;
-            z-index: 50;
-            display: flex;
-            flex-direction: column;
-            border-radius: 14px 0 0 0;
-            background: rgba(255,255,255,0.72);
-            border: 1px solid rgba(0,0,0,0.06);
-            border-right: none;
-            border-bottom: none;
-            box-shadow: -4px -4px 24px rgba(0,0,0,0.06),
-                        inset 0 1px 0 rgba(255,255,255,0.9);
-            backdrop-filter: blur(20px) saturate(1.3);
-            -webkit-backdrop-filter: blur(20px) saturate(1.3);
-            overflow: visible;
-        }
-        #console-toggle {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 14px;
-            cursor: pointer;
-            user-select: none;
-            flex-shrink: 0;
-            background: rgba(255,255,255,0.9);
-            border-radius: 14px 0 0 0;
-            border-bottom: 1px solid rgba(0,0,0,0.04);
-        }
-        #console-toggle:hover {
-            background: rgba(0,0,0,0.02);
-        }
-        #console-toggle .toggle-label {
-            font-size: 0.955rem;
-            font-weight: 700;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            color: #8888a0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        #console-toggle .log-count {
-            font-size: 0.95rem;
-            font-weight: 700;
-            padding: 1px 6px;
-            border-radius: 8px;
-            background: rgba(0,0,0,0.05);
-            color: #8888a0;
-        }
-        #console-toggle .toggle-icon {
-            width: 14px;
-            height: 14px;
-            color: #8888a0;
-            transition: transform 0.3s ease;
-        }
-        #console-panel.open #console-toggle .toggle-icon {
-            transform: rotate(180deg);
-        }
-        #console-content {
-            max-height: 0;
-            min-height: 0;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            transition: max-height 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-        }
-        #console-panel.open #console-content {
-            max-height: 45vh;
-        }
-        #console-panel.fullscreen {
-            width: 100vw;
-            max-height: 100vh;
-            height: 100vh;
-            border-radius: 0;
-            border: none;
-            background: rgba(255,255,255,0.92);
-        }
-        #console-panel.fullscreen #console-content {
-            max-height: none;
-            flex: 1;
-            overflow: hidden;
-        }
-        #console-panel.fullscreen #console-toggle {
-            border-radius: 0;
-        }
-        #console-filter {
-            display: flex;
-            gap: 4px;
-            padding: 6px 14px;
-            border-bottom: 1px solid rgba(0,0,0,0.04);
-            flex-shrink: 0;
-        }
-        .filter-btn {
-            font-size: 0.948rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            border: 1px solid rgba(0,0,0,0.06);
-            background: transparent;
-            color: #aaa;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .filter-btn:hover { background: rgba(0,0,0,0.04); }
-        .filter-btn.active {
-            background: rgba(0,0,0,0.06);
-            color: #555;
-            border-color: rgba(0,0,0,0.1);
-        }
-        #console-node-filter {
-            display: flex;
-            gap: 4px;
-            padding: 4px 14px 6px;
-            border-bottom: 1px solid rgba(0,0,0,0.04);
-            flex-shrink: 0;
-            flex-wrap: wrap;
-        }
-        .node-filter-btn {
-            font-size: 0.948rem;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            border: 1px solid rgba(0,0,0,0.06);
-            background: transparent;
-            color: #aaa;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .node-filter-btn:hover { background: rgba(0,0,0,0.04); }
-        .node-filter-btn.active {
-            background: rgba(59,130,246,0.1);
-            color: #3b82f6;
-            border-color: rgba(59,130,246,0.2);
-        }
-        #console-body {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            padding: 4px 0;
-            font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-            font-size: 0.975rem;
-            line-height: 1.6;
-            color: #555;
-            overscroll-behavior: contain;
-        }
-        #console-body::-webkit-scrollbar { width: 4px; }
-        #console-body::-webkit-scrollbar-thumb {
-            background: rgba(0,0,0,0.1);
-            border-radius: 2px;
-        }
-        .log-entry {
-            padding: 2px 14px;
-            display: flex;
-            gap: 8px;
-            align-items: baseline;
-            border-bottom: 1px solid rgba(0,0,0,0.02);
-        }
-        .log-entry:hover { background: rgba(0,0,0,0.015); }
-        .log-time { color: #bbb; flex-shrink: 0; font-size: 0.952rem; }
-        .log-name {
-            color: #888;
-            font-weight: 600;
-            flex-shrink: 0;
-            max-width: 100px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .log-msg { color: #555; word-break: break-word; }
-        .log-entry.level-warn .log-msg { color: #b45309; }
-        .log-entry.level-error .log-msg,
-        .log-entry.level-fatal .log-msg { color: #dc2626; }
-        .log-entry.level-debug .log-msg { color: #999; }
-        #console-clear {
-            font-size: 0.948rem;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 8px;
-            border: 1px solid rgba(0,0,0,0.06);
-            background: transparent;
-            color: #aaa;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        #console-clear:hover {
-            background: rgba(239,68,68,0.08);
-            color: #dc2626;
-            border-color: rgba(239,68,68,0.2);
-        }
         @media (max-width: 600px) {
-            #console-panel { width: 100%; max-height: 35vh; }
+            #map-panel { width: 100%; max-height: 35vh; }
         }
     </style>
 </head>
@@ -718,115 +680,87 @@
 
 <div id="header">
     <h1>Node Status Graph</h1>
-    <div class="ws-status">
-        <span id="ws-dot" class="ws-dot ws-disconnected"></span>
-        <span id="ws-text" style="color: #dc2626;">CONNECTING...</span>
+    <div class="slam-stats">
+        <span class="slam-stat confidence">Confidence <span class="val" id="stat-confidence">--</span></span>
+        <span class="slam-stat frontier">Frontier <span class="val" id="stat-frontier">--</span></span>
+        <span class="slam-stat growth">Growth <span class="val" id="stat-growth">--</span></span>
     </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+        <button id="btn-auto" class="header-action-btn" onclick="sendCommand({action:'launch',target:'sequential_start'})">AUTO</button>
+        <button id="btn-unstuck" class="header-action-btn" onclick="sendCommand({action:'toggle',target:'unstuck'})">UNSTUCK</button>
+        <div class="ws-status">
+            <span id="ws-dot" class="ws-dot ws-disconnected"></span>
+            <span id="ws-text" style="color: #dc2626;">CONNECTING...</span>
+        </div>
+    </div>
+</div>
+
+<div id="tv-msg">
+    <span class="tv-tag" id="tv-tag">TARGET</span>
+    <span class="tv-val" id="tv-value">--</span>
+</div>
+
+<div id="exp-msg">
+    <span class="exp-tag" id="exp-tag">--</span>
+    <span id="exp-status-value">--</span>
+</div>
+
+<div id="nav-msg">
+    <span class="nav-tag" id="nav-tag">--</span>
+    <span id="nav-status-value">--</span>
 </div>
 
 <svg id="graph-canvas"></svg>
 <div id="graph-container"></div>
-<div id="seq-banner" class="seq-banner">⚡ Sequential Mode Active — Nodes auto-managed</div>
 <div id="map-backdrop"></div>
 <div id="map-panel">
     <div class="map-header">
         SLAM Map
-        <button class="map-expand-btn" id="map-expand-btn" title="Expand">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 3 21 3 21 9"/>
-                <polyline points="9 21 3 21 3 15"/>
-                <line x1="21" y1="3" x2="14" y2="10"/>
-                <line x1="3" y1="21" x2="10" y2="14"/>
-            </svg>
-        </button>
-    </div>
-    <div class="map-body">
-        <div class="map-placeholder" id="map-placeholder">
-            No map received
-            <div class="map-status" id="map-status">subscribing to /map...</div>
-        </div>
-        <canvas id="map-canvas"></canvas>
-    </div>
-</div>
-<div id="no-data">Waiting for node data...</div>
-
-<div id="console-panel">
-    <div id="console-toggle">
-        <div class="toggle-label">
-            Console
-            <span class="log-count" id="log-count">0</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;">
-            <button id="console-fullscreen-btn" title="Fullscreen" style="background:none;border:none;cursor:pointer;padding:2px;display:flex;">
-                <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <div style="display:flex;gap:6px;align-items:center;">
+            <button class="map-fetch-btn" id="map-fetch-btn" title="Fetch map">Fetch</button>
+            <button class="map-expand-btn" id="map-expand-btn" title="Expand">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polyline points="15 3 21 3 21 9"/>
                     <polyline points="9 21 3 21 3 15"/>
                     <line x1="21" y1="3" x2="14" y2="10"/>
                     <line x1="3" y1="21" x2="10" y2="14"/>
                 </svg>
             </button>
-            <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="18 15 12 9 6 15"/>
-            </svg>
         </div>
     </div>
-    <div id="console-content">
-        <div id="console-filter">
-            <button class="filter-btn active" data-level="all">All</button>
-            <button class="filter-btn" data-level="10">Debug</button>
-            <button class="filter-btn" data-level="20">Info</button>
-            <button class="filter-btn" data-level="30">Warn</button>
-            <button class="filter-btn" data-level="40">Error</button>
-            <button id="console-clear" title="Clear logs">Clear</button>
+    <div class="map-body">
+        <div class="map-placeholder" id="map-placeholder">
+            No map received
+            <div class="map-status" id="map-status">waiting for map data...</div>
         </div>
-        <div id="console-node-filter">
-            <button class="node-filter-btn active" data-node="all">All Nodes</button>
-            <button class="node-filter-btn" data-node="navigation">navigation</button>
-            <button class="node-filter-btn" data-node="exploration">exploration</button>
-            <button class="node-filter-btn" data-node="blind_exploration">blind_exploration</button>
-            <button class="node-filter-btn" data-node="collision_avoidance">collision_avoidance</button>
-            <button class="node-filter-btn" data-node="camera_follow">camera_follow</button>
-            <button class="node-filter-btn" data-node="slam">slam</button>
-            <button class="node-filter-btn" data-node="roboclaw">roboclaw</button>
-            <button class="node-filter-btn" data-node="urg_node_2">urg_node_2</button>
-        </div>
-        <div id="console-body"></div>
+        <canvas id="map-canvas"></canvas>
     </div>
 </div>
+<div id="no-data">Waiting for node data...</div>
 
 <script>
-    const ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
     const wsDot = document.getElementById('ws-dot');
     const wsText = document.getElementById('ws-text');
-
-    ros.on('connection', () => {
-        wsDot.className = 'ws-dot ws-connected';
-        wsText.textContent = 'CONNECTED';
-        wsText.style.color = '#16a34a';
-        mapStatus.textContent = 'connected, waiting for /map...';
-    });
-    ros.on('error', () => {
-        wsDot.className = 'ws-dot ws-disconnected';
-        wsText.textContent = 'ERROR';
-        wsText.style.color = '#dc2626';
-        mapStatus.textContent = 'rosbridge error';
-    });
-    ros.on('close', () => {
-        wsDot.className = 'ws-dot ws-disconnected';
-        wsText.textContent = 'DISCONNECTED';
-        wsText.style.color = '#dc2626';
-        mapStatus.textContent = 'disconnected';
-    });
-
     const container = document.getElementById('graph-container');
     const svg = document.getElementById('graph-canvas');
     const noData = document.getElementById('no-data');
+    const mapPanel = document.getElementById('map-panel');
+    const mapCanvas = document.getElementById('map-canvas');
+    const mapPlaceholder = document.getElementById('map-placeholder');
+    const mapStatus = document.getElementById('map-status');
+    const mapCtx = mapCanvas.getContext('2d');
 
     let nodesData = {};
     let nodeElements = {};
     let isSequentialMode = false;
     let unstuckState = false;
     let buttonStates = {};
+    let mapInfo = null;
+    let mapImage = null;
+    let robotPose = null;
+    let plannedPath = null;
+    let goalPose = null;
+    let mapTransform = null;
 
     function getStateClass(state) {
         const s = state.toLowerCase();
@@ -835,31 +769,25 @@
         return 'node-unconfigured';
     }
 
+    // Verbesserter Filter: Verhindert Überlappung bei "slam_toolbox"
     function getShortName(name) {
+        if (name.toLowerCase().includes('slam')) return 'slam';
         let parts = name.split('/');
         let last = parts[parts.length - 1] || parts[parts.length - 2];
         return last.replace(/_/g, '\n');
     }
 
+    // Koordinaten korrigiert: Mehr Abstand (Gap) zwischen collision_avoidance und roboclaw
     const TOPOLOGY = {
-        'sequential_start':        { x: 0.08, y: 0.08 },
-        'urg_node_2':              { x: 0.6, y: 0.2 },
-        'slam':                    { x: 0.4, y: 0.2 },
-        'exploration':             { x: 0.3, y: 0.35 },
-        'follow_red':              { x: 0.5, y: 0.35 },
-        'navigation':              { x: 0.4, y: 0.52 },
-        'blind_exploration':       { x: 0.6, y: 0.52 },
+        'urg_node_2':              { x: 0.6, y: 0.18 },
+        'slam':                    { x: 0.4, y: 0.18 },
+        'exploration':             { x: 0.3, y: 0.36 },
+        'follow_red':              { x: 0.5, y: 0.36 },
+        'navigation':              { x: 0.4, y: 0.54 },
+        'blind_exploration':       { x: 0.6, y: 0.54 },
         'collision_avoidance':     { x: 0.50, y: 0.72 },
-        'unstuck_toggle':          { x: 0.6, y: 0.72 },
-        'roboclaw':                { x: 0.50, y: 0.90 },
+        'roboclaw':                { x: 0.50, y: 0.92 }, // Erhöhter Abstand verhindert Überlappung
     };
-
-    const FAKE_NODES = {
-        'sequential_start': { deriveFrom: null, alwaysState: 'ready' },
-        'unstuck_toggle': { deriveFrom: 'buttonState', buttonKey: 'unstuck' },
-    };
-
-
 
     const EDGES = [
         ['slam', 'navigation'],
@@ -870,7 +798,6 @@
         ['follow_red', 'navigation'],
         ['navigation', 'collision_avoidance'],
         ['blind_exploration', 'collision_avoidance'],
-        ['unstuck_toggle', 'collision_avoidance'],
         ['collision_avoidance', 'roboclaw'],
     ];
 
@@ -885,11 +812,9 @@
     }
 
     function renderGraph() {
-        const realKeys = Object.keys(nodesData);
-        const fakeKeys = Object.keys(FAKE_NODES);
-        const allKeys = [...realKeys, ...fakeKeys.filter(k => !nodesData[k])];
+        const allKeys = Object.keys(nodesData);
 
-        if (realKeys.length === 0 && fakeKeys.length === 0) {
+        if (allKeys.length === 0) {
             noData.style.display = 'block';
             return;
         }
@@ -929,20 +854,20 @@
         const edgeMap = {};
         for (const key of allKeys) edgeMap[key] = true;
 
-        let svgContent = `<defs>
-            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
-                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#c0c0d0"/>
-            </marker>
-            <marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"
-                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 1 L 8 5 L 0 9 z" fill="#22c55e"/>
-            </marker>
-            <filter id="glow">
-                <feGaussianBlur stdDeviation="2" result="blur"/>
-                <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-        </defs>`;
+        let svgContent = '<defs>' +
+            '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"' +
+            ' markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+            '<path d="M 0 1 L 8 5 L 0 9 z" fill="#c0c0d0"/>' +
+            '</marker>' +
+            '<marker id="arrow-active" viewBox="0 0 10 10" refX="9" refY="5"' +
+            ' markerWidth="7" markerHeight="7" orient="auto-start-reverse">' +
+            '<path d="M 0 1 L 8 5 L 0 9 z" fill="#22c55e"/>' +
+            '</marker>' +
+            '<filter id="glow">' +
+            '<feGaussianBlur stdDeviation="2" result="blur"/>' +
+            '<feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>' +
+            '</filter>' +
+            '</defs>';
 
         for (const [from, to] of EDGES) {
             const fromKey = allKeys.find(k => matchTopologyKey(k) === from);
@@ -953,8 +878,8 @@
             const pa = positions[fromKey];
             const pb = positions[toKey];
 
-            const stateFrom = FAKE_NODES[from]?.state || nodesData[fromKey]?.toLowerCase() || '';
-            const stateTo = FAKE_NODES[to]?.state || nodesData[toKey]?.toLowerCase() || '';
+            const stateFrom = nodesData[fromKey]?.toLowerCase() || '';
+            const stateTo = nodesData[toKey]?.toLowerCase() || '';
             const isActive = stateFrom.includes('active') && stateTo.includes('active');
             const isConfiguring = stateFrom.includes('configur') && stateTo.includes('configur');
 
@@ -982,115 +907,88 @@
             const x2 = pb.x - nx * rEnd;
             const y2 = pb.y - ny * rEnd;
 
-            svgContent += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"
-                stroke="${strokeColor}" stroke-width="${strokeW}"
-                marker-end="${markerRef}" filter="url(#glow)"
-                stroke-linecap="round"/>`;
+            svgContent += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"' +
+                ' stroke="' + strokeColor + '" stroke-width="' + strokeW + '"' +
+                ' marker-end="' + markerRef + '" filter="url(#glow)"' +
+                ' stroke-linecap="round"/>';
         }
 
         svg.innerHTML = svgContent;
 
         for (const key of allKeys) {
-            let state;
-            const fake = FAKE_NODES[key];
-            if (fake) {
-                if (fake.alwaysState) {
-                    state = fake.alwaysState;
-                } else if (fake.deriveFrom === 'buttonState') {
-                    state = buttonStates[fake.buttonKey] ? 'active' : 'unconfigured';
-                } else if (fake.deriveFrom) {
-                    const deriveKey = allKeys.find(k => matchTopologyKey(k) === fake.deriveFrom);
-                    state = (deriveKey && nodesData[deriveKey]) ? nodesData[deriveKey] : 'unconfigured';
-                } else {
-                    state = 'unconfigured';
-                }
-            } else {
-                state = nodesData[key];
-            }
-            const stateClass = getStateClass(state);
+            const state = nodesData[key];
+            let stateClass = getStateClass(state);
+            let badgeText = (state || 'OFFLINE').toUpperCase();
+            
+            const topoKey = matchTopologyKey(key);
             const pos = positions[key];
             if (!pos) continue;
+
+            // Logik-Injection: Mache statuslose Nodes (Roboclaw und URG) permanent neutral/grau
+            if (topoKey === 'urg_node_2' || topoKey === 'roboclaw') {
+                stateClass = 'node-neutral';
+                badgeText = 'N/A';
+            }
 
             if (nodeElements[key]) {
                 const el = nodeElements[key];
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
-                const isSeqEl = matchTopologyKey(key) === 'sequential_start';
-                el.className = `node ${isSeqEl ? 'node-seq-start' : stateClass}${isSeqEl && isSequentialMode ? ' seq-running' : ''}`;
-                if (!isSeqEl) {
-                    const badgeEl = el.querySelector('.node-state-badge');
-                    badgeEl.textContent = state.toUpperCase();
-                }
+                el.className = 'node ' + stateClass;
+                const badgeEl = el.querySelector('.node-state-badge');
+                badgeEl.textContent = badgeText;
             } else {
-                const topoKey = matchTopologyKey(key);
                 const isSlam = topoKey === 'slam';
                 const isRoboclaw = topoKey === 'roboclaw';
                 const isUrg = topoKey === 'urg_node_2';
-                const isUnstuck = topoKey === 'unstuck_toggle';
-                const isSeq = topoKey === 'sequential_start';
                 const icon = isSlam
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
-                         <line x1="8" y1="2" x2="8" y2="18"/>
-                         <line x1="16" y1="6" x2="16" y2="22"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>' +
+                      '<line x1="8" y1="2" x2="8" y2="18"/>' +
+                      '<line x1="16" y1="6" x2="16" y2="22"/>' +
+                      '</svg>'
                     : isRoboclaw
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <circle cx="12" cy="12" r="10"/>
-                         <circle cx="12" cy="12" r="3"/>
-                         <line x1="12" y1="2" x2="12" y2="5"/>
-                         <line x1="12" y1="19" x2="12" y2="22"/>
-                         <line x1="2" y1="12" x2="5" y2="12"/>
-                         <line x1="19" y1="12" x2="22" y2="12"/>
-                       </svg>`
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<circle cx="12" cy="12" r="10"/>' +
+                      '<circle cx="12" cy="12" r="3"/>' +
+                      '<line x1="12" y1="2" x2="12" y2="5"/>' +
+                      '<line x1="12" y1="19" x2="12" y2="22"/>' +
+                      '<line x1="2" y1="12" x2="5" y2="12"/>' +
+                      '<line x1="19" y1="12" x2="22" y2="12"/>' +
+                      '</svg>'
                     : isUrg
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                         <circle cx="12" cy="12" r="10"/>
-                         <circle cx="12" cy="12" r="8"/>
-                         <line x1="12" y1="4" x2="12" y2="8"/>
-                         <line x1="12" y1="16" x2="12" y2="20"/>
-                         <line x1="4" y1="12" x2="8" y2="12"/>
-                         <line x1="16" y1="12" x2="20" y2="12"/>
-                       </svg>`
-                    : isUnstuck
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                         <path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/>
-                         <path d="M9 12l2 2 4-4"/>
-                       </svg>`
-                    : isSeq
-                    ? `<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                       </svg>`
-                    : `<div class="led-core"></div>`;
+                    ? '<svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+                      '<circle cx="12" cy="12" r="10"/>' +
+                      '<circle cx="12" cy="12" r="8"/>' +
+                      '<line x1="12" y1="4" x2="12" y2="8"/>' +
+                      '<line x1="12" y1="16" x2="12" y2="20"/>' +
+                      '<line x1="4" y1="12" x2="8" y2="12"/>' +
+                      '<line x1="16" y1="12" x2="20" y2="12"/>' +
+                      '</svg>'
+                    : '<div class="led-core"></div>';
 
                 const el = document.createElement('div');
-                el.className = `node ${isSeq ? 'node-seq-start' : stateClass}${isSeq && isSequentialMode ? ' seq-running' : ''}`;
+                el.className = 'node ' + stateClass;
                 el.style.left = pos.x + 'px';
                 el.style.top = pos.y + 'px';
                 el.style.opacity = '0';
-                const badgeText = state.toUpperCase();
-                const labelText = isSeq ? 'AUTO' : isUnstuck ? 'UNSTUCK' : getShortName(key);
-                el.innerHTML = `
-                    <div class="node-body">
-                        <div class="node-click-flash">
-                            <div class="ring"></div>
-                            <div class="ring"></div>
-                            <div class="ring"></div>
-                            <div class="burst"></div>
-                        </div>
-                        <div class="pulse-ring"></div>
-                        ${icon}
-                    </div>
-                    <div class="node-label">${labelText}</div>
-                    <div class="node-state-badge">${badgeText}</div>
-                `;
+                
+                el.innerHTML =
+                    '<div class="node-body">' +
+                        '<div class="node-click-flash">' +
+                            '<div class="ring"></div>' +
+                            '<div class="ring"></div>' +
+                            '<div class="ring"></div>' +
+                            '<div class="burst"></div>' +
+                        '</div>' +
+                        '<div class="pulse-ring"></div>' +
+                        icon +
+                    '</div>' +
+                    '<div class="node-label">' + getShortName(key) + '</div>' +
+                    '<div class="node-state-badge">' + badgeText + '</div>';
                 if (topoKey) {
                     el.addEventListener('click', () => {
-                        if (isUnstuck) {
-                            sendCommand('toggle', 'unstuck');
-                        } else {
-                            sendCommand('launch', topoKey);
-                        }
+                        sendCommand({ action: 'launch', target: topoKey });
                         const flash = el.querySelector('.node-click-flash');
                         flash.classList.remove('animate');
                         void flash.offsetWidth;
@@ -1114,98 +1012,16 @@
         }
     }
 
-    const commandPublisher = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/api_command',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    function sendCommand(action, target, args = "") {
-        const payload = JSON.stringify({ action: action, target: target, args: args });
-        const message = new ROSLIB.Message({ data: payload });
-        commandPublisher.publish(message);
-        console.log("Command:", payload);
-    }
-
-    const nodeStateListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/node_states',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    nodeStateListener.subscribe(function(message) {
-        try {
-            const states = JSON.parse(message.data);
-            nodesData = states;
-            renderGraph();
-        } catch (e) {
-            console.error('Error parsing node states:', e);
-        }
-    });
-
-    const seqBanner = document.getElementById('seq-banner');
-
-    const buttonStateListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/web_interface/button_states',
-        messageType: 'std_msgs/msg/String'
-    });
-
-    buttonStateListener.subscribe(function(message) {
-        try {
-            const bs = JSON.parse(message.data);
-            buttonStates = bs;
-            const wasSeq = isSequentialMode;
-            isSequentialMode = bs.sequential_start === true;
-            const wasUnstuck = unstuckState;
-            unstuckState = bs.unstuck === true;
-            if (wasSeq !== isSequentialMode || wasUnstuck !== unstuckState) {
-                if (wasSeq !== isSequentialMode) {
-                    seqBanner.classList.toggle('visible', isSequentialMode);
-                }
-            }
-            renderGraph();
-        } catch (e) {
-            console.error('Error parsing button states:', e);
-        }
-    });
-
-    window.addEventListener('resize', renderGraph);
-
-    const mapPanel = document.getElementById('map-panel');
-    const mapCanvas = document.getElementById('map-canvas');
-    const mapPlaceholder = document.getElementById('map-placeholder');
-    const mapStatus = document.getElementById('map-status');
-    const mapCtx = mapCanvas.getContext('2d');
-
-    let mapInfo = null;
-    let mapImage = null;
-    let robotPose = null;
-    let plannedPath = null;
-    let goalPose = null;
-    let mapTransform = null;
-
     function worldToPixel(wx, wy) {
         if (!mapInfo || !mapTransform) return null;
         const res = mapInfo.resolution;
-        const ox = mapInfo.origin.position.x;
-        const oy = mapInfo.origin.position.y;
+        const ox = mapInfo.origin_x;
+        const oy = mapInfo.origin_y;
         const gw = mapInfo.width;
         const gh = mapInfo.height;
-        const ori = mapInfo.origin.orientation;
 
-        let dx = wx - ox;
-        let dy = wy - oy;
-        let gridX, gridY;
-        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
-            const yaw = 2 * Math.atan2(ori.z, ori.w);
-            const c = Math.cos(yaw), s = Math.sin(yaw);
-            gridX = (c * dx + s * dy) / res;
-            gridY = (-s * dx + c * dy) / res;
-        } else {
-            gridX = dx / res;
-            gridY = dy / res;
-        }
+        const gridX = (wx - ox) / res;
+        const gridY = (wy - oy) / res;
 
         return {
             x: mapTransform.offsetX + gridX * mapTransform.scale,
@@ -1213,30 +1029,71 @@
         };
     }
 
+    function pixelToWorld(px, py) {
+        if (!mapInfo || !mapTransform) return null;
+        const res = mapInfo.resolution;
+        const ox = mapInfo.origin_x;
+        const oy = mapInfo.origin_y;
+        const gw = mapInfo.width;
+        const gh = mapInfo.height;
+
+        const gridX = (px - mapTransform.offsetX) / mapTransform.scale;
+        const gridY = gh - 1 - (py - mapTransform.offsetY) / mapTransform.scale;
+
+        return { x: ox + gridX * res, y: oy + gridY * res };
+    }
+
+    function decodeMap(payload) {
+        const binary = atob(payload.data_b64 || '');
+        const cells = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) cells[i] = binary.charCodeAt(i);
+        const w = payload.width, h = payload.height;
+        const imageData = mapCtx.createImageData(w, h);
+        const pixels = imageData.data;
+        for (let i = 0; i < cells.length; i++) {
+            const val = cells[i];
+            const gx = i % w;
+            const gy = Math.floor(i / w);
+            const py = (h - 1 - gy) * w + gx;
+            const p = py * 4;
+            if (val === 0) {
+                pixels[p] = 255; pixels[p+1] = 255; pixels[p+2] = 255; pixels[p+3] = 255;
+            } else if (val === 255) {
+                pixels[p] = 0; pixels[p+1] = 0; pixels[p+2] = 0; pixels[p+3] = 0;
+            } else if (val >= 100) {
+                pixels[p] = 20; pixels[p+1] = 20; pixels[p+2] = 25; pixels[p+3] = 255;
+            } else {
+                const t = val / 100;
+                pixels[p] = Math.round(60 - t*40);
+                pixels[p+1] = Math.round(60 - t*40);
+                pixels[p+2] = Math.round(65 - t*40);
+                pixels[p+3] = Math.round(200 + t*55);
+            }
+        }
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = w; tmpCanvas.height = h;
+        tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
+        const img = new Image();
+        img.onload = () => { mapImage = img; drawMap(); };
+        img.src = tmpCanvas.toDataURL();
+    }
+
     function drawMap() {
         if (!mapImage || !mapInfo) return;
-
         const body = document.querySelector('#map-panel .map-body');
         const rect = body.getBoundingClientRect();
-        const cw = rect.width;
-        const ch = rect.height;
+        const cw = rect.width, ch = rect.height;
         if (cw === 0 || ch === 0) return;
-
         const dpr = window.devicePixelRatio || 1;
         const bufW = Math.round(cw * dpr);
         const bufH = Math.round(ch * dpr);
-        mapCanvas.width = bufW;
-        mapCanvas.height = bufH;
-        mapCanvas.style.width = cw + 'px';
-        mapCanvas.style.height = ch + 'px';
-
-        const gw = mapInfo.width;
-        const gh = mapInfo.height;
+        mapCanvas.width = bufW; mapCanvas.height = bufH;
+        mapCanvas.style.width = cw + 'px'; mapCanvas.style.height = ch + 'px';
+        const gw = mapInfo.width, gh = mapInfo.height;
         const scale = Math.min(bufW / gw, bufH / gh);
         const offsetX = (bufW - gw * scale) / 2;
         const offsetY = (bufH - gh * scale) / 2;
         mapTransform = { scale, offsetX, offsetY };
-
         mapCtx.clearRect(0, 0, bufW, bufH);
         mapCtx.imageSmoothingEnabled = true;
         mapCtx.imageSmoothingQuality = 'high';
@@ -1246,24 +1103,14 @@
             const p = worldToPixel(goalPose.x, goalPose.y);
             if (p) {
                 const gyaw = 2 * Math.atan2(goalPose.qz, goalPose.qw);
-                mapCtx.save();
-                mapCtx.translate(p.x, p.y);
-                mapCtx.rotate(-gyaw);
+                mapCtx.save(); mapCtx.translate(p.x, p.y); mapCtx.rotate(-gyaw);
                 const s = Math.max(6, scale * 0.12);
+                mapCtx.beginPath(); mapCtx.arc(0, 0, s, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.85)'; mapCtx.fill();
+                mapCtx.strokeStyle = '#fff'; mapCtx.lineWidth = 2; mapCtx.stroke();
                 mapCtx.beginPath();
-                mapCtx.arc(0, 0, s, 0, Math.PI * 2);
-                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.85)';
-                mapCtx.fill();
-                mapCtx.strokeStyle = '#fff';
-                mapCtx.lineWidth = 2;
-                mapCtx.stroke();
-                mapCtx.beginPath();
-                mapCtx.moveTo(0, -s * 1.6);
-                mapCtx.lineTo(-s * 0.7, s * 0.4);
-                mapCtx.lineTo(s * 0.7, s * 0.4);
-                mapCtx.closePath();
-                mapCtx.fillStyle = 'rgba(231, 76, 60, 0.7)';
-                mapCtx.fill();
+                mapCtx.moveTo(0, -s*1.6); mapCtx.lineTo(-s*0.7, s*0.4); mapCtx.lineTo(s*0.7, s*0.4);
+                mapCtx.closePath(); mapCtx.fillStyle = 'rgba(231, 76, 60, 0.7)'; mapCtx.fill();
                 mapCtx.restore();
             }
         }
@@ -1280,304 +1127,55 @@
             }
             mapCtx.strokeStyle = 'rgba(52, 152, 219, 0.85)';
             mapCtx.lineWidth = Math.max(2, scale * 0.2);
-            mapCtx.lineCap = 'round';
-            mapCtx.lineJoin = 'round';
+            mapCtx.lineCap = 'round'; mapCtx.lineJoin = 'round';
             mapCtx.setLineDash([scale * 0.3, scale * 0.15]);
-            mapCtx.stroke();
-            mapCtx.setLineDash([]);
+            mapCtx.stroke(); mapCtx.setLineDash([]);
         }
 
         if (robotPose) {
             const p = worldToPixel(robotPose.x, robotPose.y);
             if (p) {
                 const ryaw = 2 * Math.atan2(robotPose.qz, robotPose.qw);
-                mapCtx.save();
-                mapCtx.translate(p.x, p.y);
-                mapCtx.rotate(-ryaw);
+                mapCtx.save(); mapCtx.translate(p.x, p.y); mapCtx.rotate(-ryaw);
                 const r = Math.max(4, scale * 0.12);
+                mapCtx.beginPath(); mapCtx.arc(0, 0, r, 0, Math.PI * 2);
+                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.9)'; mapCtx.fill();
+                mapCtx.strokeStyle = '#fff'; mapCtx.lineWidth = 1.5; mapCtx.stroke();
                 mapCtx.beginPath();
-                mapCtx.arc(0, 0, r, 0, Math.PI * 2);
-                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.9)';
-                mapCtx.fill();
-                mapCtx.strokeStyle = '#fff';
-                mapCtx.lineWidth = 1.5;
-                mapCtx.stroke();
-                mapCtx.beginPath();
-                mapCtx.moveTo(0, -r * 1.5);
-                mapCtx.lineTo(-r * 0.8, r * 0.6);
-                mapCtx.lineTo(r * 0.8, r * 0.6);
-                mapCtx.closePath();
-                mapCtx.fillStyle = 'rgba(39, 174, 96, 0.7)';
-                mapCtx.fill();
+                mapCtx.moveTo(0, -r*1.5); mapCtx.lineTo(-r*0.8, r*0.6); mapCtx.lineTo(r*0.8, r*0.6);
+                mapCtx.closePath(); mapCtx.fillStyle = 'rgba(39, 174, 96, 0.7)'; mapCtx.fill();
                 mapCtx.restore();
             }
         }
     }
 
-    const mapListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/map',
-        messageType: 'nav_msgs/msg/OccupancyGrid',
-        throttle_rate: 500
-    });
-
-    mapListener.subscribe(function(message) {
-        try {
-            const info = message.info;
-            const w = info.width;
-            const h = info.height;
-            const data = message.data;
-            if (!w || !h || !data) return;
-
-            mapInfo = {
-                width: w,
-                height: h,
-                resolution: info.resolution,
-                origin: info.origin
-            };
-
-            const imageData = mapCtx.createImageData(w, h);
-            const pixels = imageData.data;
-
-            for (let i = 0; i < data.length; i++) {
-                const val = typeof data[i] === 'number' ? data[i] : parseInt(data[i]);
-                const gx = i % w;
-                const gy = Math.floor(i / w);
-                const py = (h - 1 - gy) * w + gx;
-                const p = py * 4;
-                if (val === -1) {
-                    pixels[p]     = 0;
-                    pixels[p + 1] = 0;
-                    pixels[p + 2] = 0;
-                    pixels[p + 3] = 0;
-                } else if (val === 0) {
-                    pixels[p]     = 215;
-                    pixels[p + 1] = 230;
-                    pixels[p + 2] = 245;
-                    pixels[p + 3] = 255;
-                } else {
-                    const t = Math.min(val / 100, 1);
-                    pixels[p]     = Math.round(60 - t * 40);
-                    pixels[p + 1] = Math.round(60 - t * 40);
-                    pixels[p + 2] = Math.round(65 - t * 40);
-                    pixels[p + 3] = Math.round(200 + t * 55);
-                }
-            }
-
-            const tmpCanvas = document.createElement('canvas');
-            tmpCanvas.width = w;
-            tmpCanvas.height = h;
-            tmpCanvas.getContext('2d').putImageData(imageData, 0, 0);
-            mapImage = new Image();
-            mapImage.onload = () => {
-                const resolved = resolveBaseFootprint();
-                if (resolved) {
-                    if (resolved.translation) {
-                        robotPose = {
-                            x: resolved.translation.x, y: resolved.translation.y,
-                            qz: resolved.rotation.z, qw: resolved.rotation.w
-                        };
-                    } else {
-                        robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-                    }
-                }
-                drawMap();
-            };
-            mapImage.src = tmpCanvas.toDataURL();
-
-            mapPanel.classList.add('visible');
-            mapPlaceholder.classList.add('hidden');
-            mapStatus.textContent = `${w}x${h} | res: ${info.resolution}m`;
-        } catch (e) {
-            console.error('Error rendering map:', e);
-            mapStatus.textContent = 'render error: ' + e.message;
-        }
-    });
-
-    const tfCache = {};
-
-    function composeTransform(parent, child) {
-        const cy = 2 * Math.atan2(parent.rotation.z, parent.rotation.w);
-        return {
-            x: parent.translation.x + Math.cos(cy) * child.translation.x - Math.sin(cy) * child.translation.y,
-            y: parent.translation.y + Math.sin(cy) * child.translation.x + Math.cos(cy) * child.translation.y,
-            qz: child.rotation.z,
-            qw: child.rotation.w
-        };
-    }
-
-    function resolveBaseFootprint() {
-        const bf = tfCache['map->base_footprint'];
-        if (bf) return bf;
-
-        const mapOdom = tfCache['map->odom'];
-        const odomBf = tfCache['odom->base_footprint'];
-        if (mapOdom && odomBf) return composeTransform(mapOdom, odomBf);
-
-        return tfCache['odom->base_footprint'] || null;
-    }
-
-    function handleTfMessage(message) {
-        for (const tfMsg of message.transforms) {
-            const parent = tfMsg.header.frame_id;
-            const child = tfMsg.child_frame_id;
-            const key = `${parent}->${child}`;
-            tfCache[key] = {
-                translation: tfMsg.transform.translation,
-                rotation: tfMsg.transform.rotation
-            };
-        }
-
-        const resolved = resolveBaseFootprint();
-        if (resolved) {
-            if (resolved.translation) {
-                robotPose = {
-                    x: resolved.translation.x, y: resolved.translation.y,
-                    qz: resolved.rotation.z, qw: resolved.rotation.w
-                };
-            } else {
-                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-            }
-            drawMap();
-        }
-    }
-
-    const tfTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/tf',
-        messageType: 'tf2_msgs/msg/TFMessage'
-    });
-    tfTopic.subscribe(handleTfMessage);
-
-    const tfStaticTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/tf_static',
-        messageType: 'tf2_msgs/msg/TFMessage'
-    });
-    tfStaticTopic.subscribe(handleTfMessage);
-
-    setInterval(() => {
-        if (!mapInfo || !mapImage) return;
-        const resolved = resolveBaseFootprint();
-        if (resolved) {
-            if (resolved.translation) {
-                robotPose = {
-                    x: resolved.translation.x, y: resolved.translation.y,
-                    qz: resolved.rotation.z, qw: resolved.rotation.w
-                };
-            } else {
-                robotPose = { x: resolved.x, y: resolved.y, qz: resolved.qz, qw: resolved.qw };
-            }
-            drawMap();
-        }
-    }, 500);
-
-    const pathListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/planned_path',
-        messageType: 'nav_msgs/msg/Path'
-    });
-    pathListener.subscribe(function(message) {
-        if (message.poses && message.poses.length > 0) {
-            plannedPath = message.poses.map(function(p) {
-                return { x: p.pose.position.x, y: p.pose.position.y };
-            });
-        } else {
-            plannedPath = null;
-        }
-        drawMap();
-    });
-
-    const goalListener = new ROSLIB.Topic({
-        ros: ros,
-        name: '/goal_pose',
-        messageType: 'geometry_msgs/msg/PoseStamped'
-    });
-    goalListener.subscribe(function(message) {
-        goalPose = {
-            x: message.pose.position.x,
-            y: message.pose.position.y,
-            qz: message.pose.orientation.z,
-            qw: message.pose.orientation.w
-        };
-        drawMap();
-    });
-
-    function pixelToWorld(px, py) {
-        if (!mapInfo || !mapTransform) return null;
-        const res = mapInfo.resolution;
-        const ox = mapInfo.origin.position.x;
-        const oy = mapInfo.origin.position.y;
-        const gw = mapInfo.width;
-        const gh = mapInfo.height;
-        const ori = mapInfo.origin.orientation;
-
-        const gridX = (px - mapTransform.offsetX) / mapTransform.scale;
-        const gridY = gh - 1 - (py - mapTransform.offsetY) / mapTransform.scale;
-
-        let wx = ox + gridX * res;
-        let wy = oy + gridY * res;
-
-        if (ori && (ori.x !== 0 || ori.y !== 0 || ori.z !== 0)) {
-            const yaw = 2 * Math.atan2(ori.z, ori.w);
-            const c = Math.cos(yaw), s = Math.sin(yaw);
-            const rdx = gridX * res;
-            const rdy = gridY * res;
-            wx = ox + c * rdx - s * rdy;
-            wy = oy + s * rdx + c * rdy;
-        }
-
-        return { x: wx, y: wy };
-    }
-
-    const goalPublisher = new ROSLIB.Topic({
-        ros: ros,
-        name: '/goal_pose',
-        messageType: 'geometry_msgs/msg/PoseStamped'
-    });
-
     mapCanvas.addEventListener('click', function(e) {
         if (!mapInfo || !mapTransform) return;
-
         const dpr = window.devicePixelRatio || 1;
         const bodyRect = document.querySelector('#map-panel .map-body').getBoundingClientRect();
         const px = (e.clientX - bodyRect.left) * dpr;
         const py = (e.clientY - bodyRect.top) * dpr;
-
         const world = pixelToWorld(px, py);
         if (!world) return;
-
-        const goalMsg = new ROSLIB.Message({
-            header: {
-                stamp: { sec: 0, nanosec: 0 },
-                frame_id: 'map'
-            },
-            pose: {
-                position: { x: world.x, y: world.y, z: 0.0 },
-                orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
-            }
-        });
-        goalPublisher.publish(goalMsg);
+        sendCommand({ action: 'navigate', x: +world.x.toFixed(3), y: +world.y.toFixed(3) });
     });
 
     const mapExpandBtn = document.getElementById('map-expand-btn');
+    const mapFetchBtn = document.getElementById('map-fetch-btn');
     const mapBackdrop = document.getElementById('map-backdrop');
     let mapExpanded = false;
 
     function toggleMapExpand() {
         mapExpanded = !mapExpanded;
         mapPanel.classList.add('expanding');
-
         if (mapExpanded) {
             const rect = mapPanel.getBoundingClientRect();
             const targetW = window.innerWidth - 32;
             const targetH = window.innerHeight - 32;
             const ratio = Math.min(rect.width / targetW, rect.height / targetH);
-
             mapPanel.classList.add('expanded');
-            mapPanel.style.transform = `scale(${ratio})`;
+            mapPanel.style.transform = 'scale(' + ratio + ')';
             mapBackdrop.classList.add('visible');
-
             void mapPanel.offsetHeight;
             mapPanel.style.transform = '';
         } else {
@@ -1585,11 +1183,9 @@
             const smallW = Math.min(280, window.innerWidth * 0.4);
             const smallH = Math.min(280, window.innerHeight * 0.4);
             const ratio = Math.min(smallW / rect.width, smallH / rect.height);
-
             mapPanel.style.transformOrigin = 'bottom left';
-            mapPanel.style.transform = `scale(${ratio})`;
+            mapPanel.style.transform = 'scale(' + ratio + ')';
             mapBackdrop.classList.remove('visible');
-
             const onEnd = () => {
                 mapPanel.classList.remove('expanded', 'expanding');
                 mapPanel.style.transform = '';
@@ -1599,188 +1195,158 @@
             };
             mapPanel.addEventListener('transitionend', onEnd);
         }
-
         mapExpandBtn.innerHTML = mapExpanded
-            ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                 <polyline points="4 14 10 14 10 20"/>
-                 <polyline points="20 10 14 10 14 4"/>
-                 <line x1="14" y1="10" x2="21" y2="3"/>
-                 <line x1="3" y1="21" x2="10" y2="14"/>
-               </svg>`
-            : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                 <polyline points="15 3 21 3 21 9"/>
-                 <polyline points="9 21 3 21 3 15"/>
-                 <line x1="21" y1="3" x2="14" y2="10"/>
-                 <line x1="3" y1="21" x2="10" y2="14"/>
-               </svg>`;
-
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
         if (mapExpanded) setTimeout(drawMap, 520);
     }
 
-    mapExpandBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleMapExpand();
-    });
-
-    mapBackdrop.addEventListener('click', () => {
-        if (mapExpanded) toggleMapExpand();
-    });
+    mapExpandBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMapExpand(); });
+    mapBackdrop.addEventListener('click', () => { if (mapExpanded) toggleMapExpand(); });
 
     const mapBody = document.querySelector('#map-panel .map-body');
     const resizeObs = new ResizeObserver(() => { drawMap(); });
     resizeObs.observe(mapBody);
 
-    // Console panel
-    const consolePanel = document.getElementById('console-panel');
-    const consoleToggle = document.getElementById('console-toggle');
-    const consoleBody = document.getElementById('console-body');
-    const logCountEl = document.getElementById('log-count');
-    const consoleClear = document.getElementById('console-clear');
-    const filterBtns = document.querySelectorAll('#console-filter .filter-btn');
-    const nodeFilterBtns = document.querySelectorAll('#console-node-filter .node-filter-btn');
-    const MAX_LOGS = 10000;
-    let logCount = 0;
-    let activeFilter = 'all';
-    let activeNodeFilters = new Set();
-    let autoScroll = true;
-    let logs = [];
+    async function sendCommand(payload) {
+        try {
+            const response = await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            return await response.json();
+        } catch (error) {
+            return { ok: false };
+        }
+    }
 
-    const fsBtn = document.getElementById('console-fullscreen-btn');
-
-    consoleToggle.addEventListener('click', (e) => {
-        if (e.target.closest('#console-fullscreen-btn')) return;
-        consolePanel.classList.toggle('open');
-    });
-
-    fsBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        consolePanel.classList.add('open');
-        consolePanel.classList.toggle('fullscreen');
-    });
-
-    consoleBody.addEventListener('scroll', () => {
-        autoScroll = consoleBody.scrollTop + consoleBody.clientHeight >= consoleBody.scrollHeight - 20;
-    });
-
-    filterBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            if (e.target === consoleClear) return;
-            filterBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            activeFilter = btn.dataset.level;
-            renderLogs();
-        });
-    });
-
-    nodeFilterBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const node = btn.dataset.node;
-            if (node === 'all') {
-                activeNodeFilters.clear();
-                nodeFilterBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            } else {
-                document.querySelector('#console-node-filter .node-filter-btn[data-node="all"]').classList.remove('active');
-                btn.classList.toggle('active');
-                if (btn.classList.contains('active')) {
-                    activeNodeFilters.add(node);
-                } else {
-                    activeNodeFilters.delete(node);
-                }
-                if (activeNodeFilters.size === 0) {
-                    document.querySelector('#console-node-filter .node-filter-btn[data-node="all"]').classList.add('active');
-                }
+    let mapFetching = false;
+    async function fetchMap() {
+        if (mapFetching) return;
+        mapFetching = true;
+        mapFetchBtn.classList.add('loading');
+        mapFetchBtn.textContent = '...';
+        try {
+            const resp = await fetch('/api/map');
+            const data = await resp.json();
+            if (data && data.width) {
+                mapInfo = data;
+                decodeMap(data);
+                mapPanel.classList.add('visible');
+                mapPlaceholder.classList.add('hidden');
+                mapStatus.textContent = data.width + 'x' + data.height + ' | res: ' + data.resolution + 'm';
+                drawMap();
             }
-            renderLogs();
-        });
-    });
+        } catch (e) {
+            mapStatus.textContent = 'fetch failed';
+        } finally {
+            mapFetching = false;
+            mapFetchBtn.classList.remove('loading');
+            mapFetchBtn.textContent = 'Fetch';
+        }
+    }
 
-    consoleClear.addEventListener('click', (e) => {
+    mapFetchBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        logs = [];
-        logCount = 0;
-        logCountEl.textContent = '0';
-        consoleBody.innerHTML = '';
+        fetchMap();
     });
 
-    function levelClass(level) {
-        if (level >= 50) return 'level-fatal';
-        if (level >= 40) return 'level-error';
-        if (level >= 30) return 'level-warn';
-        if (level >= 10) return 'level-debug';
-        return '';
-    }
+    function connect() {
+        const source = new EventSource('/events');
+        source.addEventListener('state', (event) => {
+            try {
+                const snapshot = JSON.parse(event.data);
 
-    function matchesNodeFilter(name) {
-        if (activeNodeFilters.size === 0) return true;
-        const lower = name.toLowerCase();
-        for (const n of activeNodeFilters) {
-            if (lower.includes(n)) return true;
-        }
-        return false;
-    }
+                wsDot.className = 'ws-dot ws-connected';
+                wsText.textContent = 'CONNECTED';
+                wsText.style.color = '#16a34a';
 
-    function renderLogs() {
-        const fragment = document.createDocumentFragment();
-        logs.forEach(entry => {
-            if (activeFilter !== 'all' && entry.level !== parseInt(activeFilter)) return;
-            if (!matchesNodeFilter(entry.name)) return;
-            const el = document.createElement('div');
-            el.className = 'log-entry ' + levelClass(entry.level);
-            el.innerHTML = '<span class="log-time">' + entry.time + '</span>' +
-                '<span class="log-name">' + entry.name + '</span>' +
-                '<span class="log-msg">' + entry.msg + '</span>';
-            fragment.appendChild(el);
+                const bs = snapshot.button_states || {};
+                buttonStates = bs;
+                isSequentialMode = bs.sequential_start === true;
+                unstuckState = bs.unstuck === true;
+                document.getElementById('btn-auto').classList.toggle('active', isSequentialMode);
+                document.getElementById('btn-unstuck').classList.toggle('unstuck-on', unstuckState);
+
+                nodesData = snapshot.node_states || {};
+
+                const sm = snapshot.slam_metrics || {};
+                document.getElementById('stat-confidence').textContent =
+                    sm.confidence !== undefined ? (sm.confidence * 100).toFixed(1) + '%' : '--';
+                document.getElementById('stat-frontier').textContent =
+                    sm.frontier_ratio !== undefined ? (sm.frontier_ratio * 100).toFixed(1) + '%' : '--';
+                document.getElementById('stat-growth').textContent =
+                    sm.growth_ratio !== undefined ? (sm.growth_ratio * 100).toFixed(1) + '%' : '--';
+
+                const navStatus = snapshot.navigation_status;
+                const navMsg = document.getElementById('nav-msg');
+                const navTag = document.getElementById('nav-tag');
+                const navValue = document.getElementById('nav-status-value');
+                navValue.textContent = navStatus || '--';
+                navTag.textContent = navStatus ? navStatus.toUpperCase() : '--';
+                navMsg.className = navStatus ? 'visible' : '';
+                if (navStatus) {
+                    const ns = navStatus.toLowerCase();
+                    if (ns === 'tracking') navMsg.classList.add('state-tracking');
+                    else if (ns === 'planning') navMsg.classList.add('state-planning');
+                    else if (ns === 'goal_succeeded') navMsg.classList.add('state-success');
+                    else if (ns === 'idle') navMsg.classList.add('state-idle');
+                    else if (ns === 'stuck' || ns === 'no_path' || ns === 'outside_map') navMsg.classList.add('state-error');
+                    else if (ns.startsWith('waiting')) navMsg.classList.add('state-waiting');
+                    else navMsg.classList.add('state-idle');
+                }
+
+                const expStatus = snapshot.exploration_status;
+                const expMsg = document.getElementById('exp-msg');
+                const expTag = document.getElementById('exp-tag');
+                const expValue = document.getElementById('exp-status-value');
+                expValue.textContent = expStatus || '--';
+                expTag.textContent = expStatus ? expStatus.toUpperCase() : '--';
+                expMsg.className = expStatus ? 'visible' : '';
+                if (expStatus) {
+                    const es = expStatus.toLowerCase();
+                    if (es === 'exploring') expMsg.classList.add('state-exploring');
+                    else if (es === 'waiting_for_standstill') expMsg.classList.add('state-waiting');
+                    else expMsg.classList.add('state-inactive');
+                }
+
+                const tv = snapshot.target_vector;
+                const tvMsg = document.getElementById('tv-msg');
+                const tvValue = document.getElementById('tv-value');
+                if (tv) {
+                    tvValue.textContent = 'L: ' + tv.linear.toFixed(3) + '  A: ' + tv.angular.toFixed(3);
+                    tvMsg.className = 'visible';
+                } else {
+                    tvMsg.className = '';
+                }
+
+                if (snapshot.map_dirty) {
+                    fetchMap();
+                }
+
+                robotPose = snapshot.robot_pose || null;
+                plannedPath = snapshot.path || null;
+                goalPose = snapshot.goal || null;
+
+                renderGraph();
+                drawMap();
+            } catch (e) {
+                console.error('State parse error:', e);
+            }
         });
-        consoleBody.innerHTML = '';
-        consoleBody.appendChild(fragment);
-        if (autoScroll) consoleBody.scrollTop = consoleBody.scrollHeight;
+        source.onerror = () => {
+            wsDot.className = 'ws-dot ws-disconnected';
+            wsText.textContent = 'DISCONNECTED';
+            wsText.style.color = '#dc2626';
+            mapStatus.textContent = 'disconnected';
+            source.close();
+            setTimeout(connect, 1500);
+        };
     }
 
-    const rosoutTopic = new ROSLIB.Topic({
-        ros: ros,
-        name: '/rosout',
-        messageType: 'rcl_interfaces/msg/Log',
-        throttle_rate: 200
-    });
-
-    rosoutTopic.subscribe(function(message) {
-        const d = message.stamp ? new Date(message.stamp.sec * 1000 + Math.round(message.stamp.nanosec / 1e6)) : new Date();
-        const h = String(d.getHours()).padStart(2, '0');
-        const m = String(d.getMinutes()).padStart(2, '0');
-        const s = String(d.getSeconds()).padStart(2, '0');
-        const ms = String(d.getMilliseconds()).padStart(3, '0');
-        const time = h + ':' + m + ':' + s + '.' + ms;
-
-        const name = message.name || '';
-        const msg = message.msg || '';
-        const level = message.level || 20;
-
-        logs.push({ time, name, msg, level });
-        logCount++;
-        logCountEl.textContent = logCount;
-
-        if (logs.length > MAX_LOGS) {
-            logs.splice(0, logs.length - MAX_LOGS);
-        }
-
-        if (activeFilter !== 'all' && level !== parseInt(activeFilter)) return;
-        if (!matchesNodeFilter(name)) return;
-
-        const el = document.createElement('div');
-        el.className = 'log-entry ' + levelClass(level);
-        el.innerHTML = '<span class="log-time">' + time + '</span>' +
-            '<span class="log-name">' + name + '</span>' +
-            '<span class="log-msg">' + msg + '</span>';
-
-        consoleBody.appendChild(el);
-
-        while (consoleBody.children.length > MAX_LOGS) {
-            consoleBody.removeChild(consoleBody.firstChild);
-        }
-
-        if (autoScroll) consoleBody.scrollTop = consoleBody.scrollHeight;
-    });
+    window.addEventListener('resize', renderGraph);
+    connect();
 </script>
 </body>
 </html>

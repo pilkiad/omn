@@ -10,6 +10,7 @@ from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
 
@@ -67,6 +68,7 @@ class Navigation(LifecycleNode):
         self.tf_error = 'not_checked'
         self._last_status_signature = None
         self._last_status_log_time = None
+        self._last_published_state = None
         self._last_planning_context = None
         self._cached_clearance_cells = None
         self._cached_inflation_offsets = None
@@ -88,6 +90,14 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
+        self.STUCK_TIMEOUT = 1.5          # seconds
+        self.STUCK_DISTANCE = 0.1        # meters
+        self.REPLAN_ON_STUCK = False       # set false to stop instead
+        self.stuck_reference_x = None
+        self.stuck_reference_y = None
+        self.stuck_reference_time = None
+        self.WAS_STUCK = False
+
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
 
@@ -99,6 +109,11 @@ class Navigation(LifecycleNode):
         self.path_publisher = self.create_lifecycle_publisher(
             Path,
             '/planned_path',
+            planned_path_qos,
+        )
+        self.status_publisher = self.create_lifecycle_publisher(
+            String,
+            '/navigation_status',
             planned_path_qos,
         )
 
@@ -134,7 +149,10 @@ class Navigation(LifecycleNode):
 
     def on_activate(self, state: State):
         self.get_logger().info("Activating navigation node")
-        return super().on_activate(state)
+        result = super().on_activate(state)
+        if result == TransitionCallbackReturn.SUCCESS:
+            self.publish_status(force=True)
+        return result
 
     def on_deactivate(self, state: State):
         self.get_logger().info("Deactivating navigation node")
@@ -148,6 +166,7 @@ class Navigation(LifecycleNode):
         self.destroy_subscription(self.pos_subscription)
         self.destroy_subscription(self.goal_pose_subscription)
         self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_lifecycle_publisher(self.status_publisher)
         self.destroy_timer(self.timer)
         self.destroy_timer(self.tf_timer)
 
@@ -169,6 +188,36 @@ class Navigation(LifecycleNode):
             )
             self.has_pose = True
             self.last_pose_time = self.now_seconds()
+
+            now = self.now_seconds()
+
+            # --- NEUE UNSTUCK LOGIK ---
+            # Timer immer auf 'jetzt' einfrieren, wenn wir nicht AKTIV navigieren.
+            # Dadurch verhindern wir, dass der Roboter beim Planen oder Warten
+            # fälschlicherweise als "feststeckend" markiert wird.
+            if self.state not in ('tracking', 'stuck') or not self.path:
+                self.stuck_reference_x = self.x
+                self.stuck_reference_y = self.y
+                self.stuck_reference_time = now
+            else:
+                if self.stuck_reference_time is None:
+                    self.stuck_reference_x = self.x
+                    self.stuck_reference_y = self.y
+                    self.stuck_reference_time = now
+                else:
+                    moved = self.distance(
+                        self.x,
+                        self.y,
+                        self.stuck_reference_x,
+                        self.stuck_reference_y,
+                    )
+
+                    if moved >= self.STUCK_DISTANCE:
+                        self.stuck_reference_x = self.x
+                        self.stuck_reference_y = self.y
+                        self.stuck_reference_time = now
+            # --------------------------
+
         except Exception as error:
             new_failure = self.tf_ok or self.tf_error == 'not_checked'
             self.tf_ok = False
@@ -295,12 +344,24 @@ class Navigation(LifecycleNode):
         self._last_status_signature = signature
         self._last_status_log_time = now
 
+    def publish_status(self, force=False):
+        if not self.status_publisher.is_activated:
+            return
+        if not force and self.state == self._last_published_state:
+            return
+
+        msg = String()
+        msg.data = self.state
+        self.status_publisher.publish(msg)
+        self._last_published_state = self.state
+
     def set_status(self, state, blocking_reason='none'):
         self.state = state
         self.blocking_reason = blocking_reason
         if state != 'no_path':
             self._last_planning_context = None
         self.log_status()
+        self.publish_status()
 
     def set_planning_status(self, replan_reason, start, goal):
         self.state = 'planning'
@@ -311,6 +372,7 @@ class Navigation(LifecycleNode):
 
         self._last_planning_context = context
         self.log_status(force=True)
+        self.publish_status()
 
     def readiness_status(self):
         if not self.has_map:
@@ -318,7 +380,7 @@ class Navigation(LifecycleNode):
         if not self.has_pose:
             return 'waiting_for_pose', 'pose_missing'
         if not self.has_goal:
-            return 'waiting_for_goal', 'goal_missing'
+            return 'idle', 'none'
         return None
 
     def outside_map_reason(self, start, goal):
@@ -460,6 +522,8 @@ class Navigation(LifecycleNode):
 
         self.path_publisher.publish(msg)
 
+        self.WAS_STUCK = False
+
     def clear_planned_path(self, reset_planning_context=False):
         self.get_logger().debug(
             f'Clearing planned path ({len(self.path)} waypoints), '
@@ -469,6 +533,19 @@ class Navigation(LifecycleNode):
         self.path_grid = []
         self.last_planned_start = None
         self.last_planned_goal = None
+
+        # --- NEUE LOGIK ---
+        # Ohne Pfad kann sich der Roboter nicht festfahren.
+        # Timer vorsichtshalber zurücksetzen.
+        self.stuck_reference_x = self.x
+        self.stuck_reference_y = self.y
+        try:
+            self.stuck_reference_time = self.now_seconds()
+        except:
+            self.stuck_reference_time = None
+        self.WAS_STUCK = False
+        # ------------------
+
         if reset_planning_context:
             self._last_planning_context = None
         self.publish_planned_path()
@@ -595,6 +672,16 @@ class Navigation(LifecycleNode):
             self.path_progress = 0.0
             self.last_planned_start = start
             self.last_planned_goal = goal
+
+            # --- NEUE LOGIK ---
+            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches
+            # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
+            self.stuck_reference_x = self.x
+            self.stuck_reference_y = self.y
+            self.stuck_reference_time = self.now_seconds()
+            self.WAS_STUCK = False
+            # ------------------
+
             self.publish_planned_path()
 
         if not self.path:
@@ -606,6 +693,24 @@ class Navigation(LifecycleNode):
                 'no_path',
                 self.no_path_reason(start, goal),
             )
+            return
+
+        stuck = self.robot_is_stuck()
+        if stuck and not self.WAS_STUCK:
+            self.get_logger().warning("Robot is stuck")
+            self.WAS_STUCK = True
+            self.set_status('stuck', 'robot_not_moving')
+            if self.REPLAN_ON_STUCK:
+                self.clear_planned_path(reset_planning_context=True)
+                return
+
+        if not stuck:
+            self.WAS_STUCK = False
+
+        if stuck and not self.REPLAN_ON_STUCK:
+            msg.linear = 0.0
+            msg.angular = 0.0
+            self.publisher.publish(msg)
             return
 
         waypoint = self.next_waypoint()
@@ -1025,6 +1130,17 @@ class Navigation(LifecycleNode):
 
     def clamp(self, value, minimum, maximum):
         return max(minimum, min(value, maximum))
+
+    def robot_is_stuck(self):
+        # --- NEUE LOGIK ---
+        # Sofortiger Abbruch der Prüfung, wenn wir keinen Pfad haben.
+        if self.stuck_reference_time is None or not self.path:
+            return False
+        # ------------------
+        return (
+            self.now_seconds() - self.stuck_reference_time
+            > self.STUCK_TIMEOUT
+        )
 
 
 def main():
