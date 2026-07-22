@@ -62,6 +62,11 @@ class _TargetVector:
         self.angular = 0.0
 
 
+class _String:
+    def __init__(self, data=''):
+        self.data = data
+
+
 class _Node:
     def __init__(self, *args, **kwargs):
         pass
@@ -137,6 +142,13 @@ def _install_ros_stubs():
     nav_msgs.msg = nav_msg
     sys.modules['nav_msgs'] = nav_msgs
     sys.modules['nav_msgs.msg'] = nav_msg
+
+    std_msgs = types.ModuleType('std_msgs')
+    std_msg = types.ModuleType('std_msgs.msg')
+    std_msg.String = _String
+    std_msgs.msg = std_msg
+    sys.modules['std_msgs'] = std_msgs
+    sys.modules['std_msgs.msg'] = std_msg
 
     rclpy = types.ModuleType('rclpy')
     rclpy.init = lambda: None
@@ -227,15 +239,19 @@ def _make_navigation(path_grid, goal=None):
     nav.tf_error = 'not_checked'
     nav._last_status_signature = None
     nav._last_status_log_time = None
+    nav._last_published_state = None
     nav._last_planning_context = None
     nav._cached_clearance_cells = None
     nav._cached_inflation_offsets = None
     nav._pending_map = None
 
     nav.OCCUPIED_THRESHOLD = 100
+    nav.REPLAN_ON_STUCK = True
+    nav.WAS_STUCK = False
 
     nav.publisher = _Publisher()
     nav.path_publisher = _Publisher()
+    nav.status_publisher = _Publisher()
     nav.logger = _Logger()
     nav.clock = _Clock()
     nav.get_logger = lambda: nav.logger
@@ -541,7 +557,7 @@ def test_readiness_status_prioritizes_map_pose_and_goal():
     assert nav.readiness_status() == ('waiting_for_pose', 'pose_missing')
 
     nav.has_pose = True
-    assert nav.readiness_status() == ('waiting_for_goal', 'goal_missing')
+    assert nav.readiness_status() == ('idle', 'none')
 
     nav.has_goal = True
     assert nav.readiness_status() is None
@@ -581,6 +597,32 @@ def test_status_log_is_compact_and_uses_two_second_heartbeat():
     nav.clock.advance(1.1)
     nav.set_status('tracking')
     assert len(nav.logger.infos) == 2
+
+
+def test_status_publisher_publishes_only_state_changes():
+    nav = _make_navigation([(0, 0), (1, 0)])
+
+    nav.set_status('tracking')
+    nav.set_status('tracking')
+    nav.set_status('idle')
+
+    assert [msg.data for msg in nav.status_publisher.messages] == [
+        'tracking',
+        'idle',
+    ]
+
+
+def test_stuck_detection_publishes_before_automatic_replan():
+    nav = _make_navigation([(0, 0), (1, 0)])
+    nav.robot_is_stuck = lambda: True
+
+    nav.timer_callback()
+
+    assert nav.state == 'stuck'
+    assert nav.blocking_reason == 'robot_not_moving'
+    assert nav.status_publisher.messages[-1].data == 'stuck'
+    assert nav.path == []
+    assert nav.path_grid == []
 
 
 def test_repeated_failed_replan_does_not_spam_planning_or_no_path():
