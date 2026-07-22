@@ -54,6 +54,7 @@ class Exploration(LifecycleNode):
         self.get_logger().info("Activating exploration node")
         self.state = 'inactive'
         self._last_published_state = None
+        self.set_status('starting...')
         return super().on_activate(state)
 
     def on_deactivate(self, state: State):
@@ -161,7 +162,7 @@ class Exploration(LifecycleNode):
             self.set_status('inactive (not activated)')
             return
 
-        self.set_status('exploring')
+        self.set_status('searching...')
         self.flood_fill()
         self.get_logger().info("Searching for best exploration spot...")
 
@@ -249,6 +250,7 @@ class Exploration(LifecycleNode):
         self.marker_positions = target_positions
         self.send_position(closest_position)
         self.publish_markers()
+        self.set_status('position found')
 
     def publish_markers(self):
         if not self.publisher.is_activated:

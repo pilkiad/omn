@@ -9,6 +9,7 @@ from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
 from collision_interfaces.msg import TargetVector
 import base64
+import collections
 import json
 import subprocess
 import threading
@@ -114,12 +115,19 @@ def _make_handler(backend_node):
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Connection', 'keep-alive')
             self.end_headers()
+            last_log_seq = 0
             try:
                 while True:
                     state = backend_node.get_state()
                     data = json.dumps(state)
                     chunk = 'event: state\ndata: {}\n\n'.format(data)
                     self.wfile.write(chunk.encode('utf-8'))
+
+                    for entry in backend_node.get_logs_since(last_log_seq):
+                        last_log_seq = entry['seq']
+                        log_chunk = 'event: log\ndata: {}\n\n'.format(json.dumps(entry))
+                        self.wfile.write(log_chunk.encode('utf-8'))
+
                     self.wfile.flush()
                     time.sleep(0.2)
             except (BrokenPipeError, ConnectionResetError,
@@ -241,6 +249,10 @@ class DashboardBackendNode(Node):
         self.active_processes = {}
         self.process_lock = threading.Lock()
 
+        self.log_buffer = collections.deque(maxlen=2000)
+        self.log_seq = 0
+        self.log_lock = threading.Lock()
+
         self.sequential_active = False
         self.sequential_stage = 0
         self.sequential_start_time = 0.0  # Wichtig fuer die 3 Sekunden Schonzeit
@@ -311,6 +323,22 @@ class DashboardBackendNode(Node):
     def get_map(self):
         self.map_dirty = False
         return self.latest_map
+
+    def _append_log(self, node, stream, text):
+        """Puffert eine Konsolenzeile eines gestarteten Prozesses (stdout/stderr/system)."""
+        with self.log_lock:
+            self.log_seq += 1
+            self.log_buffer.append({
+                'seq': self.log_seq,
+                'ts': time.time(),
+                'node': node,
+                'stream': stream,
+                'text': text,
+            })
+
+    def get_logs_since(self, seq):
+        with self.log_lock:
+            return [e for e in self.log_buffer if e['seq'] > seq]
 
     def handle_command(self, payload):
         action = payload.get("action")
@@ -587,7 +615,7 @@ class DashboardBackendNode(Node):
                         self.toggle_node("blind_exploration", ["ros2", "launch", "exploration", "blind_exploration.launch.py"])
 
                 elif target == "slam":
-                    self.toggle_node("slam", ["ros2", "launch", "slam", "slam_mapping.launch.py"])
+                    self.toggle_node("slam_toolbox", ["ros2", "launch", "slam", "slam_mapping.launch.py"])
 
                 elif target == "blind_exploration":
                     self.ensure_node_is_killed("exploration")
@@ -682,6 +710,13 @@ class DashboardBackendNode(Node):
                 self.active_processes.pop(target_key, None)
             else:
                 self.get_logger().info(f"🚀 [{target_key.upper()}] wird gestartet...")
+                self._append_log(target_key, 'system', f'--- starting {target_key} ---')
+
+                def pump(stream, stream_name):
+                    for line in iter(stream.readline, ''):
+                        self._append_log(target_key, stream_name, line.rstrip('\n'))
+                    stream.close()
+
                 def run_subprocess():
                     try:
                         proc = subprocess.Popen(
@@ -689,14 +724,24 @@ class DashboardBackendNode(Node):
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                             text=True,
+                            bufsize=1,
                             preexec_fn=os.setsid
                         )
                         with self.process_lock:
                             self.active_processes[target_key] = proc
-                        proc.communicate()
+
+                        t_out = threading.Thread(target=pump, args=(proc.stdout, 'stdout'), daemon=True)
+                        t_err = threading.Thread(target=pump, args=(proc.stderr, 'stderr'), daemon=True)
+                        t_out.start()
+                        t_err.start()
+                        proc.wait()
+                        t_out.join(timeout=2)
+                        t_err.join(timeout=2)
                     except Exception as e:
                         self.get_logger().error(f"❌ Fehler bei Ausfuehrung von [{target_key.upper()}]: {e}")
+                        self._append_log(target_key, 'system', f'--- error: {e} ---')
                     finally:
+                        self._append_log(target_key, 'system', f'--- {target_key} stopped ---')
                         with self.process_lock:
                             if target_key in self.active_processes and self.active_processes[target_key] == proc:
                                 self.active_processes.pop(target_key, None)
