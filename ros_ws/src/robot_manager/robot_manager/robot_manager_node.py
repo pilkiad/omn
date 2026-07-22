@@ -48,7 +48,9 @@ from .dashboard_server import DashboardServer
 from .health_monitor import HealthMonitor
 from .lifecycle import RobotEvent, RobotLifecycle, RobotState
 from .slam_metrics import SlamMetrics
-from .task_manager import TASK_FOLLOW_RED, TASK_NAVIGATE, TaskManager
+from .task_manager import (
+    TASK_EXPLORE, TASK_FOLLOW_RED, TASK_NAVIGATE, TaskManager,
+)
 
 try:
     from slam_toolbox.srv import SaveMap
@@ -61,6 +63,25 @@ class RobotManagerNode(Node):
     GOAL_TOLERANCE = 0.15      # m; slightly looser than navigation2's 0.10
     NAV_TIMEOUT = 300.0        # s
     DASHBOARD_PORT = 8765
+
+    # "Stack" components: drivers/nodes normally started by hand in their own
+    # terminal. The dashboard can now start/stop each with one click instead.
+    # Order matters for the UI only; nothing here enforces launch order.
+    LAUNCH_TARGETS = {
+        'urg_node2': ['ros2', 'launch', 'urg_node2', 'urg_node2.launch.py'],
+        'roboclaw': ['ros2', 'launch', 'roboclaw_node', 'roboclaw_launch.py'],
+        'slam': ['ros2', 'launch', 'slam', 'slam_mapping.launch.py'],
+        'navigation': ['ros2', 'launch', 'navigation', 'navigation.launch.py'],
+    }
+
+    # Task-scoped pipelines: like LAUNCH_TARGETS, but tied to a Task (started
+    # by a Task button, stopped automatically on cancel/estop/completion).
+    TASK_LAUNCH_CMDS = {
+        TASK_FOLLOW_RED: ['ros2', 'launch', 'follow_red',
+                          'follow_red_with_avoidance.launch.py'],
+        TASK_EXPLORE: ['ros2', 'launch', 'exploration',
+                       'blind_exploration.launch.py'],
+    }
 
     def __init__(self):
         super().__init__('robot_manager')
@@ -94,7 +115,11 @@ class RobotManagerNode(Node):
         self.map_saved = bool(self.get_parameter('assume_map_available').value)
         self._boot_time = time.time()
         self._save_in_flight = False
-        self._follow_red_proc = None   # subprocess running the follow_red pipeline
+        # subprocess running the active task's pipeline (follow_red/explore)
+        self._task_proc = None
+        self._task_proc_type = None
+        # subprocess for each one-click "stack" component (LAUNCH_TARGETS)
+        self._stack_procs = {}
 
         # Latest map payload for the dashboard
         self.map_version = 0
@@ -204,7 +229,7 @@ class RobotManagerNode(Node):
             self.lifecycle.handle(RobotEvent.CRITICAL_FAULT, note=failure)
             if self.tasks.busy:
                 self.tasks.fail('critical fault: {} lost'.format(failure))
-            self._stop_follow_red()
+            self._stop_task_proc()
             self._clear_navigation()
             return
 
@@ -227,27 +252,34 @@ class RobotManagerNode(Node):
                     self.tasks.start(TASK_MAP)
             return
 
+        if state == RobotState.MAPPING:
+            self._tick_task_proc(now)
+
         if state == RobotState.EXECUTING:
             self._tick_navigation(now)
-            self._tick_follow_red(now)
+            self._tick_task_proc(now)
 
-    def _tick_follow_red(self, now):
-        if not self.tasks.busy or self.tasks.active.type != TASK_FOLLOW_RED:
+    def _tick_task_proc(self, now):
+        task_type = self.tasks.active.type if self.tasks.busy else None
+        if task_type not in (TASK_FOLLOW_RED, TASK_EXPLORE):
             return
-        proc = self._follow_red_proc
+        proc = self._task_proc
         if proc is None or proc.poll() is not None:
             # Pipeline is gone (crashed or was never started properly).
-            self._follow_red_proc = None
-            self.tasks.fail('follow_red pipeline stopped unexpectedly')
-            self.lifecycle.handle(RobotEvent.TASK_FINISHED)
+            self._task_proc = None
+            self._task_proc_type = None
+            label = 'follow_red' if task_type == TASK_FOLLOW_RED else 'exploration'
+            self.tasks.fail('{} pipeline stopped unexpectedly'.format(label))
+            if self.lifecycle.state == RobotState.EXECUTING:
+                self.lifecycle.handle(RobotEvent.TASK_FINISHED)
             return
         elapsed = now - (self.tasks.active.started or now)
-        self.tasks.update_progress(
-            0.0, 'following the red cube · {:.0f}s'.format(elapsed))
+        verb = 'following the red cube' if task_type == TASK_FOLLOW_RED \
+            else 'exploring autonomously'
+        self.tasks.update_progress(0.0, '{} · {:.0f}s'.format(verb, elapsed))
 
-    def _stop_follow_red(self):
-        proc = self._follow_red_proc
-        self._follow_red_proc = None
+    @staticmethod
+    def _terminate(proc):
         if proc is None or proc.poll() is not None:
             return
         try:
@@ -256,9 +288,55 @@ class RobotManagerNode(Node):
                 proc.wait(timeout=3.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        except Exception as error:
-            self.get_logger().warning(
-                'failed to stop follow_red pipeline: %s' % error)
+        except Exception:
+            pass
+
+    def _start_task_proc(self, task_type):
+        cmd = self.TASK_LAUNCH_CMDS[task_type]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        self._task_proc = proc
+        self._task_proc_type = task_type
+        return proc
+
+    def _stop_task_proc(self):
+        proc = self._task_proc
+        self._task_proc = None
+        self._task_proc_type = None
+        if proc is not None:
+            self.get_logger().info('stopping task pipeline (pid %d)' % proc.pid)
+        self._terminate(proc)
+
+    def _start_stack(self, name):
+        if name not in self.LAUNCH_TARGETS:
+            raise KeyError(name)
+        existing = self._stack_procs.get(name)
+        if existing is not None and existing.poll() is None:
+            raise RuntimeError('{} is already running'.format(name))
+        proc = subprocess.Popen(self.LAUNCH_TARGETS[name],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        self._stack_procs[name] = proc
+        self.get_logger().info('started %s (pid %d)' % (name, proc.pid))
+
+    def _stop_stack(self, name):
+        proc = self._stack_procs.get(name)
+        self._stack_procs[name] = None
+        if proc is not None:
+            self.get_logger().info('stopping %s (pid %d)' % (name, proc.pid))
+        self._terminate(proc)
+
+    def _stop_all_stack(self):
+        for name in list(self._stack_procs):
+            self._stop_stack(name)
+
+    def _stack_status(self):
+        status = {}
+        for name in self.LAUNCH_TARGETS:
+            proc = self._stack_procs.get(name)
+            status[name] = 'running' if (proc is not None
+                                         and proc.poll() is None) else 'stopped'
+        return status
 
     def _tick_navigation(self, now):
         if not self.tasks.busy or self.tasks.active.type != TASK_NAVIGATE:
@@ -373,6 +451,7 @@ class RobotManagerNode(Node):
             'estopped': self.estopped,
             'injected_faults': [],
             'map_version': self.map_version,
+            'stack': self._stack_status(),
         }
 
     def map_payload(self):
@@ -424,41 +503,39 @@ class RobotManagerNode(Node):
             self.lifecycle.handle(RobotEvent.TASK_STARTED)
             return {'ok': True, 'task_id': task.id}
 
-        if action == 'follow_red':
-            if self.lifecycle.state != RobotState.READY:
+        if action in ('follow_red', 'explore'):
+            task_type = TASK_FOLLOW_RED if action == 'follow_red' else TASK_EXPLORE
+            allowed_states = ((RobotState.READY,) if action == 'follow_red'
+                              else (RobotState.MAPPING, RobotState.READY))
+            if self.lifecycle.state not in allowed_states:
                 return {'ok': False,
-                        'error': 'robot not READY (state: {})'.format(
-                            self.lifecycle.state.value)}
-            task = self.tasks.start(TASK_FOLLOW_RED)
+                        'error': 'robot not ready for {} (state: {})'.format(
+                            action, self.lifecycle.state.value)}
+            task = self.tasks.start(task_type)
             if task is None:
                 return {'ok': False, 'error': 'another task is active'}
-            # Start the existing follow_red pipeline (camera tracker +
-            # collision avoidance). It publishes /target_vector and drives
-            # the base until it is cancelled.
+            # Start the matching pipeline (see TASK_LAUNCH_CMDS). It drives
+            # the base on its own until cancelled/estopped/it exits.
             try:
-                self._follow_red_proc = subprocess.Popen(
-                    ['ros2', 'launch', 'follow_red',
-                     'follow_red_with_avoidance.launch.py'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                self._start_task_proc(task_type)
             except OSError as error:
-                self.tasks.fail('could not start follow_red: {}'.format(error))
+                self.tasks.fail('could not start {}: {}'.format(action, error))
                 return {'ok': False,
-                        'error': 'could not start follow_red: {}'.format(error)}
-            self.tasks.update_progress(0.0, 'starting red cube tracking…')
-            self.lifecycle.handle(RobotEvent.TASK_STARTED)
-            self.get_logger().info('follow_red pipeline started (pid %d)'
-                                   % self._follow_red_proc.pid)
+                        'error': 'could not start {}: {}'.format(action, error)}
+            self.tasks.update_progress(0.0, 'starting…')
+            if self.lifecycle.state == RobotState.READY:
+                self.lifecycle.handle(RobotEvent.TASK_STARTED)
+            self.get_logger().info('%s pipeline started (pid %d)'
+                                   % (action, self._task_proc.pid))
             return {'ok': True, 'task_id': task.id}
 
         if action == 'cancel':
             if not self.tasks.busy:
                 return {'ok': False, 'error': 'no active task'}
-            was_follow_red = self.tasks.active.type == TASK_FOLLOW_RED
+            had_pipeline = self.tasks.active.type in (TASK_FOLLOW_RED, TASK_EXPLORE)
             self.tasks.cancel()
-            if was_follow_red:
-                self._stop_follow_red()
+            if had_pipeline:
+                self._stop_task_proc()
                 # Command zero velocity so the base stops immediately.
                 self.cmd_pub.publish(Twist())
             if self.goal is not None and self.has_pose:
@@ -488,7 +565,7 @@ class RobotManagerNode(Node):
                 self.estopped = True
                 if self.tasks.busy:
                     self.tasks.fail('emergency stop')
-                self._stop_follow_red()
+                self._stop_task_proc()
                 self._clear_navigation()
                 self.lifecycle.handle(RobotEvent.ESTOP_PRESSED)
                 self.cmd_pub.publish(Twist())
@@ -507,9 +584,23 @@ class RobotManagerNode(Node):
             self.lifecycle.handle(RobotEvent.REMAP_REQUESTED)
             return {'ok': True}
 
-        if action in ('explore', 'inject_fault'):
+        if action == 'inject_fault':
             return {'ok': False,
-                    'error': '{} is only available in sim mode'.format(action)}
+                    'error': 'inject_fault is only available in sim mode'}
+
+        if action in ('start_stack', 'stop_stack'):
+            name = payload.get('target')
+            if name not in self.LAUNCH_TARGETS:
+                return {'ok': False,
+                        'error': 'unknown stack target: {}'.format(name)}
+            try:
+                if action == 'start_stack':
+                    self._start_stack(name)
+                else:
+                    self._stop_stack(name)
+            except (OSError, RuntimeError) as error:
+                return {'ok': False, 'error': str(error)}
+            return {'ok': True, 'stack': self._stack_status()}
 
         return {'ok': False, 'error': 'unknown action: {}'.format(action)}
 
@@ -523,7 +614,8 @@ def main(args=None):
         pass
     finally:
         try:
-            node._stop_follow_red()
+            node._stop_task_proc()
+            node._stop_all_stack()
             node.dashboard.shutdown()
             node.destroy_node()
         except Exception:
