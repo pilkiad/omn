@@ -17,3 +17,8 @@ manager:                Sharif, Bashar, Omar, Arian
 follow red cube:        Tom
 
 localization(in sim):   Nils
+
+
+Simulation-Team:        Omar, Nasim, Nils
+
+Testing-Team:           All
