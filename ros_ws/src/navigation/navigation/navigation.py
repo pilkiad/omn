@@ -90,8 +90,8 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 7.0          # seconds
-        self.STUCK_DISTANCE = 0.2        # meters
+        self.STUCK_TIMEOUT = 60.0          # seconds
+        self.STUCK_DISTANCE = 1.0        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
@@ -701,7 +701,7 @@ class Navigation(LifecycleNode):
                 self.no_path_reason(start, goal),
             )
             return
-        
+
         if self.STUCK_TOGGLE:
             stuck = self.robot_is_stuck()
             if stuck and not self.WAS_STUCK:
