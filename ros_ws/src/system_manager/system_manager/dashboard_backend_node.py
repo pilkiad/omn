@@ -607,7 +607,7 @@ class DashboardBackendNode(Node):
                         self.toggle_node("blind_exploration", ["ros2", "launch", "exploration", "blind_exploration.launch.py"])
 
                 elif target == "slam":
-                    self.toggle_node("slam", ["ros2", "launch", "slam", "slam_mapping.launch.py"])
+                    self.toggle_node("slam_toolbox", ["ros2", "launch", "slam", "slam_mapping.launch.py"])
 
                 elif target == "blind_exploration":
                     self.ensure_node_is_killed("exploration")
