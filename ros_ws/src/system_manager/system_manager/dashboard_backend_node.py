@@ -7,9 +7,7 @@ from std_msgs.msg import String, Bool
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
-from rcl_interfaces.msg import Log
 import base64
-import collections
 import json
 import subprocess
 import threading
@@ -82,6 +80,8 @@ def _make_handler(backend_node):
                 self._send_file('index.html')
             elif path == '/api/state':
                 self._send_json(backend_node.get_state())
+            elif path == '/api/map':
+                self._send_json(backend_node.get_map())
             elif path == '/events':
                 self._stream_events()
             elif path.startswith('/www/'):
@@ -153,10 +153,10 @@ class DashboardBackendNode(Node):
         self.unstuck_pub = self.create_publisher(Bool, '/toggle_unstuck', 10)
 
         self.latest_map = None
+        self.map_dirty = False
         self.latest_robot_pose = None
         self.latest_path = None
         self.latest_goal = None
-        self.latest_logs = collections.deque(maxlen=200)
         self.tf_cache = {}
 
         self.create_subscription(
@@ -165,8 +165,6 @@ class DashboardBackendNode(Node):
             Path, '/planned_path', self.path_callback, 10)
         self.create_subscription(
             PoseStamped, '/goal_pose', self.goal_callback, 10)
-        self.create_subscription(
-            Log, '/rosout', self.rosout_callback, 10)
 
         try:
             from tf2_msgs.msg import TFMessage
@@ -206,10 +204,14 @@ class DashboardBackendNode(Node):
             'exploration',
             'follow_red',
             'navigation',
-            'roboclaw',
-            'urg_node_2',
         ]
-        self.node_states = {node: "OFFLINE" for node in self.lifecycle_nodes}
+        self.graph_nodes = [
+            'urg_node_2',
+            'roboclaw',
+        ]
+        self.node_states = {}
+        for n in self.lifecycle_nodes + self.graph_nodes:
+            self.node_states[n] = "OFFLINE"
         self.state_clients = {}
 
         for node_name in self.lifecycle_nodes:
@@ -217,6 +219,7 @@ class DashboardBackendNode(Node):
             self.state_clients[node_name] = cli
 
         self.lifecycle_timer = self.create_timer(0.5, self.check_lifecycle_states)
+        self.graph_timer = self.create_timer(0.5, self.check_graph_nodes)
 
         self.active_processes = {}
         self.process_lock = threading.Lock()
@@ -269,16 +272,24 @@ class DashboardBackendNode(Node):
                 button_states[key] = self.node_states.get(
                     key, 'OFFLINE').lower() == 'active'
 
+        for key in self.graph_nodes:
+            if key not in button_states:
+                button_states[key] = self.node_states.get(
+                    key, 'OFFLINE').lower() == 'active'
+
         return {
             "button_states": button_states,
             "node_states": dict(self.node_states),
             "slam_metrics": self.latest_slam_metrics,
-            "map": self.latest_map,
+            "map_dirty": self.map_dirty,
             "robot_pose": self.latest_robot_pose,
             "path": self.latest_path,
             "goal": self.latest_goal,
-            "logs": list(self.latest_logs),
         }
+
+    def get_map(self):
+        self.map_dirty = False
+        return self.latest_map
 
     def handle_command(self, payload):
         action = payload.get("action")
@@ -322,6 +333,18 @@ class DashboardBackendNode(Node):
         msg = String()
         msg.data = json.dumps(self.node_states)
         self.node_states_pub.publish(msg)
+
+    def check_graph_nodes(self):
+        """Check if non-lifecycle nodes are visible in the ROS graph."""
+        try:
+            names = self.get_node_names()
+            for node_name in self.graph_nodes:
+                if node_name in names:
+                    self.node_states[node_name] = "active"
+                else:
+                    self.node_states[node_name] = "OFFLINE"
+        except Exception:
+            pass
 
     def lifecycle_state_cb(self, future, node_name):
         """Callback, wenn die Service-Antwort eines Lifecycle-Nodes eintrifft."""
@@ -377,6 +400,10 @@ class DashboardBackendNode(Node):
                     states[key] = True
 
         for key in self.lifecycle_nodes:
+            if key not in states:
+                states[key] = self.node_states.get(key, 'OFFLINE').lower() == 'active'
+
+        for key in self.graph_nodes:
             if key not in states:
                 states[key] = self.node_states.get(key, 'OFFLINE').lower() == 'active'
 
@@ -441,6 +468,7 @@ class DashboardBackendNode(Node):
             'origin_y': info.origin.position.y,
             'data_b64': base64.b64encode(cells).decode('ascii'),
         }
+        self.map_dirty = True
 
     def _handle_tf(self, msg):
         for tf_msg in msg.transforms:
@@ -488,19 +516,6 @@ class DashboardBackendNode(Node):
             'x': msg.pose.position.x, 'y': msg.pose.position.y,
             'qz': msg.pose.orientation.z, 'qw': msg.pose.orientation.w
         }
-
-    def rosout_callback(self, msg):
-        import datetime
-        sec = msg.stamp.sec if msg.stamp else int(time.time())
-        nsec = msg.stamp.nanosec if msg.stamp else 0
-        d = datetime.datetime.fromtimestamp(sec + nsec / 1e9)
-        entry = {
-            'time': d.strftime('%H:%M:%S.') + f'{nsec // 1000000:03d}',
-            'name': msg.name or '',
-            'msg': msg.msg or '',
-            'level': msg.level or 20,
-        }
-        self.latest_logs.append(entry)
 
     def command_callback(self, msg):
         """Callback für Befehle aus der Web-GUI mit Schutz-Matrix & State-Machine."""
@@ -562,7 +577,7 @@ class DashboardBackendNode(Node):
                     self.ensure_node_is_killed("blind_exploration")
                     self.ensure_node_is_killed("exploration")
                     self.ensure_node_is_killed("navigation")
-                    self.toggle_node("follow_red", ["ros2", "launch", "follow_red", "follow_red_with_avoidance.launch.py"])
+                    self.toggle_node("follow_red", ["ros2", "launch", "follow_red", "follow_red_with_navigation.launch.py"])
 
                 elif target == "urg_node_2":
                     self.toggle_node("urg_node_2", ["ros2", "launch", "urg_node_2", "urg_node_2.launch.py"])

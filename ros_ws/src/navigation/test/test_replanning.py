@@ -46,7 +46,14 @@ class _Path:
 
 
 class _OccupancyGrid:
-    pass
+    def __init__(self, width=20, height=20, resolution=1.0, data=None):
+        self.info = types.SimpleNamespace(
+            width=width,
+            height=height,
+            resolution=resolution,
+            origin=types.SimpleNamespace(position=_Position()),
+        )
+        self.data = data if data is not None else [0] * (width * height)
 
 
 class _TargetVector:
@@ -68,6 +75,7 @@ class _QoSProfile:
 class _Publisher:
     def __init__(self):
         self.messages = []
+        self.is_activated = True
 
     def publish(self, msg):
         self.messages.append(msg)
@@ -75,8 +83,12 @@ class _Publisher:
 
 class _Logger:
     def __init__(self):
+        self.debugs = []
         self.infos = []
         self.warnings = []
+
+    def debug(self, msg):
+        self.debugs.append(msg)
 
     def info(self, msg):
         self.infos.append(msg)
@@ -137,7 +149,15 @@ def _install_ros_stubs():
     rclpy_node = types.ModuleType('rclpy.node')
     rclpy_node.Node = _Node
     rclpy.node = rclpy_node
+    rclpy_lifecycle = types.ModuleType('rclpy.lifecycle')
+    rclpy_lifecycle.LifecycleNode = _Node
+    rclpy_lifecycle.State = object
+    rclpy_lifecycle.TransitionCallbackReturn = types.SimpleNamespace(
+        SUCCESS=object(),
+    )
+    rclpy.lifecycle = rclpy_lifecycle
     sys.modules['rclpy'] = rclpy
+    sys.modules['rclpy.lifecycle'] = rclpy_lifecycle
     sys.modules['rclpy.node'] = rclpy_node
     sys.modules['rclpy.time'] = rclpy_time
 
@@ -186,6 +206,10 @@ def _make_navigation(path_grid, goal=None):
     nav.OFF_PATH_REPLAN_DISTANCE_CELLS = 2
     nav.LINEAR_SPEED = 0.09
     nav.MAX_ANGULAR_SPEED = 0.45
+    nav.SMOOTH_W_DATA = 0.2
+    nav.SMOOTH_W_SMOOTH = 0.3
+    nav.SMOOTH_TOLERANCE = 1e-10
+    nav.SMOOTH_REFINEMENTS = 2
 
     nav.goal_x, nav.goal_y = nav.grid_to_world(goal)
     nav.path_grid = list(path_grid)
@@ -204,6 +228,11 @@ def _make_navigation(path_grid, goal=None):
     nav._last_status_signature = None
     nav._last_status_log_time = None
     nav._last_planning_context = None
+    nav._cached_clearance_cells = None
+    nav._cached_inflation_offsets = None
+    nav._pending_map = None
+
+    nav.OCCUPIED_THRESHOLD = 100
 
     nav.publisher = _Publisher()
     nav.path_publisher = _Publisher()
@@ -219,6 +248,30 @@ def _make_navigation(path_grid, goal=None):
 
 def _set_robot_cell(nav, cell):
     nav.x, nav.y = nav.grid_to_world(cell)
+
+
+def _buffer_map(nav, occupied_cells=()):
+    data = [0] * (nav.map_width * nav.map_height)
+    for cell in occupied_cells:
+        data[nav.map_index(cell)] = nav.OCCUPIED_THRESHOLD
+
+    nav.map_callback(
+        _OccupancyGrid(
+            width=nav.map_width,
+            height=nav.map_height,
+            resolution=nav.map_resolution,
+            data=data,
+        )
+    )
+
+
+def _use_map_occupancy(nav):
+    nav.build_obstacle_distance_map = lambda: []
+    nav.is_raw_free = lambda cell: (
+        nav.in_bounds(cell)
+        and not nav.raw_value_blocked(nav.env_map[nav.map_index(cell)])
+    )
+    nav.is_traversable = nav.is_raw_free
 
 
 def test_moving_to_next_grid_cell_on_path_does_not_replan():
@@ -274,6 +327,87 @@ def test_timer_does_not_replan_while_advancing_along_valid_path():
 
     assert calls == []
     assert len(nav.publisher.messages) == 3
+
+
+def test_pending_map_blocking_route_is_applied_before_path_validation():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    _use_map_occupancy(nav)
+    _buffer_map(nav, occupied_cells=[(1, 0)])
+    detour = [(0, 0), (0, 1), (1, 1), (2, 1), (2, 0)]
+    calls = []
+
+    def a_star(start, goal):
+        calls.append((start, goal))
+        return detour
+
+    nav.a_star = a_star
+
+    assert nav._pending_map is not None
+    assert 'will apply on next navigation tick' in nav.logger.infos[-1]
+
+    nav.timer_callback()
+
+    assert nav._pending_map is None
+    assert nav.env_map[nav.map_index((1, 0))] == nav.OCCUPIED_THRESHOLD
+    assert calls == [((0, 0), (2, 0))]
+    assert nav.path_grid == detour
+
+
+def test_unrelated_pending_map_update_does_not_replan():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    _use_map_occupancy(nav)
+    _buffer_map(nav, occupied_cells=[(10, 10)])
+    calls = []
+    nav.a_star = lambda start, goal: calls.append((start, goal)) or []
+
+    nav.timer_callback()
+
+    assert nav._pending_map is None
+    assert nav.env_map[nav.map_index((10, 10))] == nav.OCCUPIED_THRESHOLD
+    assert calls == []
+    assert nav.path_grid == [(0, 0), (1, 0), (2, 0)]
+    assert nav.state == 'tracking'
+
+
+def test_blocked_map_stops_then_cleared_map_resumes_navigation():
+    nav = _make_navigation([(0, 0), (1, 0), (2, 0)])
+    _use_map_occupancy(nav)
+    calls = []
+
+    def a_star(start, goal):
+        calls.append((start, goal))
+        if nav.is_raw_free((1, 0)):
+            return [(0, 0), (1, 0), (2, 0)]
+        return []
+
+    nav.a_star = a_star
+    _buffer_map(nav, occupied_cells=[(1, 0)])
+
+    nav.timer_callback()
+
+    assert calls == [((0, 0), (2, 0))]
+    assert nav.path == []
+    assert nav.path_grid == []
+    assert nav.publisher.messages[-1].linear == 0.0
+    assert nav.publisher.messages[-1].angular == 0.0
+
+    nav.timer_callback()
+
+    assert calls == [((0, 0), (2, 0)), ((0, 0), (2, 0))]
+    assert nav.publisher.messages[-1].linear == 0.0
+    assert nav.publisher.messages[-1].angular == 0.0
+
+    _buffer_map(nav)
+    nav.timer_callback()
+
+    assert calls == [
+        ((0, 0), (2, 0)),
+        ((0, 0), (2, 0)),
+        ((0, 0), (2, 0)),
+    ]
+    assert nav.path_grid == [(0, 0), (1, 0), (2, 0)]
+    assert nav.publisher.messages[-1].linear > 0.0
+    assert nav.state == 'tracking'
 
 
 def test_neighbors_use_flat_cost_inside_safety_radius():
