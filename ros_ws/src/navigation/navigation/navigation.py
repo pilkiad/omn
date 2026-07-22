@@ -10,6 +10,7 @@ from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import DurabilityPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
 
@@ -67,6 +68,7 @@ class Navigation(LifecycleNode):
         self.tf_error = 'not_checked'
         self._last_status_signature = None
         self._last_status_log_time = None
+        self._last_published_state = None
         self._last_planning_context = None
         self._cached_clearance_cells = None
         self._cached_inflation_offsets = None
@@ -109,6 +111,11 @@ class Navigation(LifecycleNode):
             '/planned_path',
             planned_path_qos,
         )
+        self.status_publisher = self.create_lifecycle_publisher(
+            String,
+            '/navigation_status',
+            planned_path_qos,
+        )
 
         self.map_subscription = self.create_subscription(
             OccupancyGrid,
@@ -142,7 +149,10 @@ class Navigation(LifecycleNode):
 
     def on_activate(self, state: State):
         self.get_logger().info("Activating navigation node")
-        return super().on_activate(state)
+        result = super().on_activate(state)
+        if result == TransitionCallbackReturn.SUCCESS:
+            self.publish_status(force=True)
+        return result
 
     def on_deactivate(self, state: State):
         self.get_logger().info("Deactivating navigation node")
@@ -156,6 +166,7 @@ class Navigation(LifecycleNode):
         self.destroy_subscription(self.pos_subscription)
         self.destroy_subscription(self.goal_pose_subscription)
         self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_lifecycle_publisher(self.status_publisher)
         self.destroy_timer(self.timer)
         self.destroy_timer(self.tf_timer)
 
@@ -322,12 +333,24 @@ class Navigation(LifecycleNode):
         self._last_status_signature = signature
         self._last_status_log_time = now
 
+    def publish_status(self, force=False):
+        if not self.status_publisher.is_activated:
+            return
+        if not force and self.state == self._last_published_state:
+            return
+
+        msg = String()
+        msg.data = self.state
+        self.status_publisher.publish(msg)
+        self._last_published_state = self.state
+
     def set_status(self, state, blocking_reason='none'):
         self.state = state
         self.blocking_reason = blocking_reason
         if state != 'no_path':
             self._last_planning_context = None
         self.log_status()
+        self.publish_status()
 
     def set_planning_status(self, replan_reason, start, goal):
         self.state = 'planning'
@@ -338,6 +361,7 @@ class Navigation(LifecycleNode):
 
         self._last_planning_context = context
         self.log_status(force=True)
+        self.publish_status()
 
     def readiness_status(self):
         if not self.has_map:
@@ -345,7 +369,7 @@ class Navigation(LifecycleNode):
         if not self.has_pose:
             return 'waiting_for_pose', 'pose_missing'
         if not self.has_goal:
-            return 'waiting_for_goal', 'goal_missing'
+            return 'idle', 'none'
         return None
 
     def outside_map_reason(self, start, goal):
@@ -638,13 +662,11 @@ class Navigation(LifecycleNode):
         stuck = self.robot_is_stuck()
         if stuck and not self.WAS_STUCK:
             self.get_logger().warning("Robot is stuck")
+            self.WAS_STUCK = True
+            self.set_status('stuck', 'robot_not_moving')
             if self.REPLAN_ON_STUCK:
-                self.WAS_STUCK = True
                 self.clear_planned_path(reset_planning_context=True)
                 return
-            else:
-                self.WAS_STUCK = True
-                self.set_status("stuck", "robot_not_moving")
 
         if not stuck:
             self.WAS_STUCK = False
