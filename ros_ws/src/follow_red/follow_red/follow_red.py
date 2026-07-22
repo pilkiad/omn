@@ -2,6 +2,7 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode
 from collision_interfaces.msg import TargetVector
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
 import cv2
 import numpy as np
 import math
@@ -25,6 +26,7 @@ class CubeWaypointNode(LifecycleNode):
         self.video_writer = None
         self.publisher_ = None
         self.goal_pose_publisher_ = None
+        self.status_publisher = None
         self.timer = None
 
         # Camera frame settings
@@ -63,8 +65,6 @@ class CubeWaypointNode(LifecycleNode):
         # Throttled logging
         self._frame_count = 0
         self._log_interval = 40  # log every 40 frames (~2s at 20Hz)
-
-        self.once: bool = False
 
         self.get_logger().info(
             f'[__init__] Cube Node created (state=unconfigured). Modus: '
@@ -114,10 +114,14 @@ class CubeWaypointNode(LifecycleNode):
             self.goal_pose_publisher_ = self.create_lifecycle_publisher(PoseStamped, '/goal_pose', 10)
             self.publisher_ = None
 
+        self.get_logger().info('on_configure: creating status publisher on /follow_red_status ...')
+        self.status_publisher = self.create_lifecycle_publisher(String, '/follow_red_status', 10)
+
         self.get_logger().info('on_configure: publisher created, creating timer ...')
         self.timer = self.create_timer(0.05, self.process_image_loop)
 
         self.get_logger().info('on_configure: SUCCESS - Lifecycle Node configured.')
+        self._publish_status('configured')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
@@ -133,10 +137,12 @@ class CubeWaypointNode(LifecycleNode):
             f'(exists={self.publisher_ is not None or self.goal_pose_publisher_ is not None})'
         )
 
+        self._publish_status('active')
         return super().on_activate(state)
 
     def on_deactivate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self.get_logger().info('Lifecycle Node deactivated.')
+        self._publish_status('inactive')
         return super().on_deactivate(state)
 
     def _cleanup_resources(self):
@@ -149,6 +155,9 @@ class CubeWaypointNode(LifecycleNode):
         if self.goal_pose_publisher_ is not None:
             self.destroy_lifecycle_publisher(self.goal_pose_publisher_)
             self.goal_pose_publisher_ = None
+        if self.status_publisher is not None:
+            self.destroy_lifecycle_publisher(self.status_publisher)
+            self.status_publisher = None
         if self.video_writer is not None:
             self.video_writer.release()
             self.video_writer = None
@@ -158,11 +167,13 @@ class CubeWaypointNode(LifecycleNode):
         cv2.destroyAllWindows()
 
     def on_cleanup(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
+        self._publish_status('unconfigured')
         self._cleanup_resources()
         self.get_logger().info('Lifecycle Node cleaned up.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
+        self._publish_status('shutdown')
         self._cleanup_resources()
         if self.path_x:
             self.plot_data()
@@ -193,6 +204,12 @@ class CubeWaypointNode(LifecycleNode):
         delta_x = filtered_cx - self.screen_center_x
         angle_deg = (delta_x / self.screen_center_x) * (self.fov_h_deg / 2.0)
         return -math.radians(angle_deg)
+
+    def _publish_status(self, status: str):
+        if self.status_publisher is not None and self.status_publisher.is_activated:
+            msg = String()
+            msg.data = status
+            self.status_publisher.publish(msg)
 
     def update_target(self, x: float, w: float, current_area: float) -> tuple[float, float]:
         raw_cx = x + (w / 2.0)
@@ -293,9 +310,11 @@ class CubeWaypointNode(LifecycleNode):
                     if self.send_polar_instead_of_xy:
                         val_linear = smooth_distance
                         val_angular = smooth_angle
+                        self._publish_status(f'tracking: lin={val_linear:.2f}, ang={math.degrees(val_angular):.0f}°')
                     else:
                         val_linear = smooth_x
                         val_angular = smooth_y
+                        self._publish_status(f'goal_pose: x={val_linear:.2f}, y={val_angular:.2f}')
                 else:
                     if throttled:
                         self.get_logger().info(f'[frame={self._frame_count}] Target movement within deadband. Skipping publish.')
@@ -318,8 +337,10 @@ class CubeWaypointNode(LifecycleNode):
                     f'[frame={self._frame_count}] {len(contours)} contour(s) found, '
                     f'largest area={max_area:.0f}px (< 500 threshold)'
                 )
+                self._publish_status('searching')
         elif throttled and not contours:
             self.get_logger().info(f'[frame={self._frame_count}] No red contours detected')
+            self._publish_status('searching')
 
         if self.video_writer is not None:
             self.video_writer.write(frame)
@@ -343,8 +364,7 @@ class CubeWaypointNode(LifecycleNode):
                     f'[frame={self._frame_count}] Cannot publish: self.publisher_ is None!'
                 )
         else:
-            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated and not self.once:
-                self.once = True
+            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated:
                 msg = PoseStamped()
                 msg.header.frame_id = 'base_footprint'
                 msg.header.stamp = self.get_clock().now().to_msg()
