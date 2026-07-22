@@ -1213,6 +1213,9 @@ class Navigation(LifecycleNode):
         # Sofortiger Abbruch der Prüfung, wenn wir keinen Pfad haben.
         if self.stuck_reference_time is None or not self.path:
             return False
+        if (abs(angular) + abs(linear)) > 0.01:
+            self.stuck_reference_time = self.now_seconds()
+            return False
         # ------------------
         return (
             self.now_seconds() - self.stuck_reference_time
