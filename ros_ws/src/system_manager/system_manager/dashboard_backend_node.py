@@ -223,6 +223,7 @@ class DashboardBackendNode(Node):
 
         self.sequential_active = False
         self.sequential_stage = 0
+        self.sequential_start_time = 0.0  # Wichtig fuer die 3 Sekunden Schonzeit
 
         self.latest_slam_metrics = {}
 
@@ -404,15 +405,20 @@ class DashboardBackendNode(Node):
             }
 
             if self.sequential_active and self.sequential_stage == 1:
-                if confidence >= 0.30:
-                    self.get_logger().info("\n" + "🌟"*20)
-                    self.get_logger().info(f"🎯 ZIEL ERREICHT! Confidence liegt bei {confidence*100:.1f}%.")
-                    self.get_logger().info("🔄 SCHALTE UM: Von [Blind Exploration] auf [Intelligent Exploration]!")
-                    self.get_logger().info("🌟"*20 + "\n")
+                # Exakt 3 Sekunden Schonzeit berechnen
+                elapsed_time = time.time() - self.sequential_start_time
+                if elapsed_time > 30.0:
+                    if confidence >= 0.30:
+                        self.get_logger().info("\n" + "🌟"*20)
+                        self.get_logger().info(f"🎯 ZIEL ERREICHT! Confidence liegt bei {confidence*100:.1f}%.")
+                        self.get_logger().info("🔄 SCHALTE UM: Von [Blind Exploration] auf [Intelligent Exploration]!")
+                        self.get_logger().info("🌟"*20 + "\n")
 
-                    self.sequential_stage = 2
-                    self.ensure_node_is_killed("blind_exploration")
-                    self.toggle_node("exploration", ["ros2", "launch", "exploration", "exploration.launch.py"])
+                        self.sequential_stage = 2
+                        self.ensure_node_is_killed("blind_exploration")
+                        self.toggle_node("exploration", ["ros2", "launch", "exploration", "exploration.launch.py"])
+                else:
+                    self.get_logger().debug(f"Grace Period aktiv, ignoriere Confidence (verbleibend: {3.0 - elapsed_time:.1f}s)")
 
             self.get_logger().debug(
                 f"[Metriken] Conf: {confidence*100:.1f}% | "
@@ -522,6 +528,7 @@ class DashboardBackendNode(Node):
                         self.get_logger().info("⚡ SEQUENTIELLER MODUS GESTARTET! (Erwartet, dass SLAM bereits laeuft)")
                         self.sequential_active = True
                         self.sequential_stage = 1
+                        self.sequential_start_time = time.time()  # Startzeitpunkt fuer die 3 Sekunden erfassen
 
                         self.ensure_node_is_killed("blind_exploration")
                         self.ensure_node_is_killed("exploration")
