@@ -2,6 +2,7 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
 from collision_interfaces.msg import TargetVector
 from nav_msgs.msg import OccupancyGrid
 from visualization_msgs.msg import Marker, MarkerArray
@@ -31,11 +32,14 @@ class Exploration(LifecycleNode):
         self.map_resolution = 0.0
 
         self.already_visited = []
+        self.state = 'inactive'
+        self._last_published_state = None
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring exploration node")
 
         self.publisher = self.create_lifecycle_publisher(PoseStamped, "/goal_pose", 1)
+        self.status_publisher = self.create_lifecycle_publisher(String, "/exploration_status", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
         self.exploration_time = self.create_timer(10, self.exploration_callback)
@@ -48,16 +52,21 @@ class Exploration(LifecycleNode):
 
     def on_activate(self, state: State):
         self.get_logger().info("Activating exploration node")
+        self.state = 'inactive'
+        self._last_published_state = None
         return super().on_activate(state)
 
     def on_deactivate(self, state: State):
         self.get_logger().info("Deactivating exploration node")
+        self.state = 'inactive'
+        self.publish_status()
         return super().on_deactivate(state)
 
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Cleaning up exploration node")
 
         self.destroy_lifecycle_publisher(self.publisher)
+        self.destroy_lifecycle_publisher(self.status_publisher)
         self.destroy_subscription(self.map_subscription)
         self.destroy_subscription(self.target_vector_subscription)
         self.destroy_timer(self.exploration_time)
@@ -68,6 +77,23 @@ class Exploration(LifecycleNode):
 
     def target_vector_callback(self, msg):
         self.target_vector = [ msg.linear, msg.angular ]
+
+    def set_status(self, state):
+        if state == self.state:
+            return
+        self.state = state
+        self.get_logger().info(f'Exploration status: {state}')
+        self.publish_status()
+
+    def publish_status(self):
+        if not self.status_publisher.is_activated:
+            return
+        if self.state == self._last_published_state:
+            return
+        msg = String()
+        msg.data = self.state
+        self.status_publisher.publish(msg)
+        self._last_published_state = self.state
 
     def get_cell_at(self, x, y):
         index = (y * self.map_width) + x
@@ -119,17 +145,20 @@ class Exploration(LifecycleNode):
         return (position[0], position[1]) in self.flood_fill_map
 
     def exploration_callback(self):
-        # Ensure some map has been received in the last n seconds to we have some current data to work with
         if self.env_map is None:
             self.get_logger().warn("Cannot explore: no current map")
+            self.set_status('inactive')
             return
         if self.our_position is None:
             self.get_logger().warn("Cannot explore: no current position")
+            self.set_status('inactive')
             return
         if self.target_vector != [ 0.0, 0.0 ]:
             self.get_logger().info("Waiting for standstill...")
+            self.set_status('waiting_for_standstill')
             return
         if not self.publisher.is_activated:
+            self.set_status('inactive')
             return
 
         self.flood_fill()
@@ -212,7 +241,10 @@ class Exploration(LifecycleNode):
 
         if closest_position is None:
             self.get_logger().info("Cannot explore: no suitable position")
+            self.set_status('inactive')
             return
+
+        self.set_status('exploring')
 
         # Send the desired position over to navigation
         self.marker_positions = target_positions

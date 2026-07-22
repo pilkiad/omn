@@ -90,8 +90,8 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 3.0          # seconds
-        self.STUCK_DISTANCE = 0.05        # meters
+        self.STUCK_TIMEOUT = 1.5          # seconds
+        self.STUCK_DISTANCE = 0.1        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
@@ -674,7 +674,7 @@ class Navigation(LifecycleNode):
             self.last_planned_goal = goal
 
             # --- NEUE LOGIK ---
-            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches 
+            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches
             # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
             self.stuck_reference_x = self.x
             self.stuck_reference_y = self.y
