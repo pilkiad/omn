@@ -90,7 +90,7 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 5.0          # seconds
+        self.STUCK_TIMEOUT = 7.0          # seconds
         self.STUCK_DISTANCE = 0.2        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
