@@ -346,7 +346,7 @@ class CubeWaypointNode(LifecycleNode):
             if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated and not self.once:
                 self.once = True
                 msg = PoseStamped()
-                msg.header.frame_id = 'camera_link'
+                msg.header.frame_id = 'base_footprint'
                 msg.header.stamp = self.get_clock().now().to_msg()
                 msg.pose.position.x = val_linear
                 msg.pose.position.y = val_angular
