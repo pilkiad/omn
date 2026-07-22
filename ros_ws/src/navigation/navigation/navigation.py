@@ -97,13 +97,16 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 3.0          # seconds
-        self.STUCK_DISTANCE = 0.05        # meters
+        self.STUCK_TIMEOUT = 20.0          # seconds
+        self.STUCK_DISTANCE = 0.5        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
         self.stuck_reference_time = None
         self.WAS_STUCK = False
+        self.STUCK_TOGGLE = False
+        self.global_linear = 0
+        self.global_angular = 0
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
@@ -546,6 +549,7 @@ class Navigation(LifecycleNode):
         self.has_goal = True
         self.last_goal_time = self.now_seconds()
         self.clear_planned_path(reset_planning_context=True)
+        self.STUCK_TOGGLE = False
 
 
     def activate_next_goal(self):
@@ -607,7 +611,7 @@ class Navigation(LifecycleNode):
             self.stuck_reference_time = None
         self.WAS_STUCK = False
         # ------------------
-
+        self.STUCK_TOGGLE = False
         if reset_planning_context:
             self._last_planning_context = None
         self.publish_planned_path()
@@ -652,6 +656,7 @@ class Navigation(LifecycleNode):
             self.get_logger().debug(
                 f'Not ready to plan: {readiness_status[1]}'
             )
+            self.STUCK_TOGGLE = False
             self.set_status(*readiness_status)
             return
 
@@ -719,6 +724,7 @@ class Navigation(LifecycleNode):
             replan_reason = 'map updated'
 
         if replan_reason is not None:
+            self.STUCK_TOGGLE = False
             self.get_logger().info(
                 f'Replanning: reason="{replan_reason}" '
                 f'start={start} goal={goal}'
@@ -760,8 +766,10 @@ class Navigation(LifecycleNode):
             # ------------------
 
             self.publish_planned_path()
+            self.STUCK_TOGGLE = True
 
         if not self.path:
+            self.STUCK_TOGGLE = False
             self.get_logger().warning(
                 f'No path available: reason="{self.no_path_reason(start, goal)}"'
             )
@@ -772,28 +780,29 @@ class Navigation(LifecycleNode):
             )
             return
 
-        stuck = self.robot_is_stuck()
-        if stuck and not self.WAS_STUCK:
-            self.get_logger().warning("Robot is stuck")
-            self.WAS_STUCK = True
-            self.set_status('stuck', 'robot_not_moving')
-            if self.REPLAN_ON_STUCK:
-                self.clear_planned_path(reset_planning_context=True)
+        if self.STUCK_TOGGLE:
+            stuck = self.robot_is_stuck()
+            if stuck and not self.WAS_STUCK:
+                self.get_logger().warning("Robot is stuck")
+                self.WAS_STUCK = True
+                self.set_status('stuck', 'robot_not_moving')
+                if self.REPLAN_ON_STUCK:
+                    self.clear_planned_path(reset_planning_context=True)
+                    return
+            if not stuck:
+                self.WAS_STUCK = False
+            if stuck and not self.REPLAN_ON_STUCK:
+                msg.linear = 0.0
+                msg.angular = 0.0
+                self.publisher.publish(msg)
                 return
-
-        if not stuck:
-            self.WAS_STUCK = False
-
-        if stuck and not self.REPLAN_ON_STUCK:
-            msg.linear = 0.0
-            msg.angular = 0.0
-            self.publisher.publish(msg)
-            return
 
         waypoint = self.next_waypoint()
         linear, angular = self.target_vector_to_waypoint(waypoint)
         msg.linear = linear
         msg.angular = angular
+        self.global_linear = linear
+        self.global_angular = angular
         self.publisher.publish(msg)
         self.set_status('tracking')
 
@@ -1213,7 +1222,7 @@ class Navigation(LifecycleNode):
         # Sofortiger Abbruch der Prüfung, wenn wir keinen Pfad haben.
         if self.stuck_reference_time is None or not self.path:
             return False
-        if (abs(angular) + abs(linear)) > 0.01:
+        if (abs(self.global_angular) + abs(self.global_linear)) > 0.05:
             self.stuck_reference_time = self.now_seconds()
             return False
         # ------------------
