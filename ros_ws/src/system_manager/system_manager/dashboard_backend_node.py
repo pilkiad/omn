@@ -184,6 +184,10 @@ class DashboardBackendNode(Node):
         self.create_subscription(
             String, '/exploration_status', self.exp_status_callback, 10)
 
+        self.latest_follow_red_status = None
+        self.create_subscription(
+            String, '/follow_red_status', self.follow_red_status_callback, 10)
+
         self.latest_target_vector = None
         self.create_subscription(
             TargetVector, '/target_vector', self.target_vector_callback, 10)
@@ -300,6 +304,7 @@ class DashboardBackendNode(Node):
             "goal": self.latest_goal,
             "navigation_status": self.latest_nav_status,
             "exploration_status": self.latest_exp_status,
+            "follow_red_status": self.latest_follow_red_status,
             "target_vector": self.latest_target_vector,
         }
 
@@ -538,6 +543,9 @@ class DashboardBackendNode(Node):
 
     def exp_status_callback(self, msg):
         self.latest_exp_status = msg.data
+
+    def follow_red_status_callback(self, msg):
+        self.latest_follow_red_status = msg.data
 
     def target_vector_callback(self, msg):
         self.latest_target_vector = {'linear': msg.linear, 'angular': msg.angular}
