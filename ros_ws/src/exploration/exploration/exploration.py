@@ -42,7 +42,7 @@ class Exploration(LifecycleNode):
         self.status_publisher = self.create_lifecycle_publisher(String, "/exploration_status", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
-        self.exploration_time = self.create_timer(10, self.exploration_callback)
+        self.exploration_time = self.create_timer(30, self.exploration_callback)
         self.marker_pub = self.create_lifecycle_publisher(MarkerArray, '/exploration_markers', 1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
