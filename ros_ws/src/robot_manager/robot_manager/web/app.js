@@ -20,6 +20,7 @@ const els = {
   exploreBtn: $('explore-btn'), remapBtn: $('remap-btn'),
   followRedBtn: $('follow-red-btn'), cancelBtn: $('cancel-btn'),
   healthBody: $('health-body'), simTools: $('sim-tools'), faultBtn: $('fault-btn'),
+  stackBody: $('stack-body'),
   slamConfidence: $('slam-confidence'), slamHold: $('slam-hold'),
   slamUnknown: $('slam-unknown'), slamFrontier: $('slam-frontier'),
   slamGrowth: $('slam-growth'),
@@ -320,6 +321,7 @@ function render() {
   renderPipeline(snapshot.lifecycle);
   renderTasks(snapshot.task, lifecycleState);
   renderHealth(health);
+  renderStack(snapshot.stack);
   renderSlam(snapshot.slam);
   drawMap();
 
@@ -385,7 +387,8 @@ function renderTasks(tasks, lifecycleState) {
   ).join('');
 
   const busy = !!active;
-  els.exploreBtn.disabled = busy || lifecycleState !== 'ready';
+  els.exploreBtn.disabled = busy ||
+    (lifecycleState !== 'ready' && lifecycleState !== 'mapping');
   els.followRedBtn.disabled = busy || lifecycleState !== 'ready';
   els.remapBtn.disabled = busy || lifecycleState !== 'ready';
   els.cancelBtn.disabled = !busy;
@@ -404,6 +407,37 @@ function renderHealth(health) {
       <td>${rate}</td><td>${age}</td></tr>`;
   }).join('');
 }
+
+/* ================= stack (one-click launch) ================= */
+
+const STACK_LABELS = {
+  urg_node2: 'LiDAR driver (urg_node2)',
+  roboclaw: 'Motors (roboclaw)',
+  slam: 'SLAM (slam_toolbox)',
+  navigation: 'Navigation + collision avoidance',
+};
+
+function renderStack(stack) {
+  if (!stack) return;
+  els.stackBody.innerHTML = Object.keys(STACK_LABELS).map((name) => {
+    const running = stack[name] === 'running';
+    return `<tr>
+      <td>${STACK_LABELS[name]}</td>
+      <td><span class="hstat ${running ? 'ok' : 'unknown'}">
+        <span class="hdot"></span>${running ? 'running' : 'stopped'}</span></td>
+      <td><button class="btn subtle stack-btn" data-target="${name}"
+          data-action="${running ? 'stop_stack' : 'start_stack'}">
+          ${running ? 'Stop' : 'Start'}</button></td></tr>`;
+  }).join('');
+}
+
+els.stackBody.addEventListener('click', (event) => {
+  const button = event.target.closest('.stack-btn');
+  if (!button) return;
+  button.disabled = true;
+  sendCommand({ action: button.dataset.action, target: button.dataset.target })
+    .finally(() => { button.disabled = false; });
+});
 
 /* ================= SLAM chart ================= */
 

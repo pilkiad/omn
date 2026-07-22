@@ -76,6 +76,17 @@
 
     <section class="card">
       <div class="card-head">
+        <h2>Stack</h2>
+        <span class="hint">start each component instead of a separate terminal</span>
+      </div>
+      <table class="health-table" id="stack-table">
+        <thead><tr><th>component</th><th>status</th><th></th></tr></thead>
+        <tbody id="stack-body"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
         <h2>Health monitor</h2>
         <div class="btn-row" id="sim-tools" hidden>
           <button class="btn subtle" id="fault-btn">Drop LiDAR (sim)</button>

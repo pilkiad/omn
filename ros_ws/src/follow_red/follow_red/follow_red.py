@@ -64,6 +64,8 @@ class CubeWaypointNode(LifecycleNode):
         self._frame_count = 0
         self._log_interval = 40  # log every 40 frames (~2s at 20Hz)
 
+        self.once: bool = False
+
         self.get_logger().info(
             f'[__init__] Cube Node created (state=unconfigured). Modus: '
             f'{"POLAR (Linear/Angular)" if self.send_polar_instead_of_xy else "POSE (X/Y -> /goal_pose)"}'
@@ -341,7 +343,8 @@ class CubeWaypointNode(LifecycleNode):
                     f'[frame={self._frame_count}] Cannot publish: self.publisher_ is None!'
                 )
         else:
-            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated:
+            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated and not self.once:
+                self.once = True
                 msg = PoseStamped()
                 msg.header.frame_id = 'camera_link'
                 msg.header.stamp = self.get_clock().now().to_msg()
