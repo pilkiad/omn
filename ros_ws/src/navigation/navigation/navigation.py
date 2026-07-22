@@ -90,7 +90,7 @@ class Navigation(LifecycleNode):
 
         self.STUCK_TIMEOUT = 3.0          # seconds
         self.STUCK_DISTANCE = 0.05        # meters
-        self.REPLAN_ON_STUCK = True       # set false to stop instead
+        self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
         self.stuck_reference_time = None
