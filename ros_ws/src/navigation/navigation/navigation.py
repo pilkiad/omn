@@ -437,7 +437,7 @@ class Navigation(LifecycleNode):
             f'resolution={msg.info.resolution:.3f} - '
             f'will apply on next replan'
         )
-        self._pending_map = pending
+        self._pending_map = pending  #
 
     def _apply_pending_map(self):
         pending = self._pending_map
