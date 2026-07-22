@@ -184,8 +184,8 @@ class Exploration(LifecycleNode):
 
                 empty_count = 0
                 wall_count = 0
-                for oy in range(-10, 10):
-                    for ox in range(-10, 10):
+                for oy in range(-5, 5):
+                    for ox in range(-5, 5):
                         other_cell = self.get_cell_at(x+ox,y+oy)
                         if other_cell == -1:
                             empty_count += 1
