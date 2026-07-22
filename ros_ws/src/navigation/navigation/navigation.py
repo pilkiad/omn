@@ -88,14 +88,6 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 3.0          # seconds
-        self.STUCK_DISTANCE = 0.05        # meters
-        self.REPLAN_ON_STUCK = True       # set false to stop instead
-        self.stuck_reference_x = None
-        self.stuck_reference_y = None
-        self.stuck_reference_time = None
-        self.WAS_STUCK = False
-
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
 
@@ -177,25 +169,6 @@ class Navigation(LifecycleNode):
             )
             self.has_pose = True
             self.last_pose_time = self.now_seconds()
-
-            now = self.now_seconds()
-            if self.stuck_reference_time is None:
-                self.stuck_reference_x = self.x
-                self.stuck_reference_y = self.y
-                self.stuck_reference_time = now
-            else:
-                moved = self.distance(
-                    self.x,
-                    self.y,
-                    self.stuck_reference_x,
-                    self.stuck_reference_y,
-                )
-
-                if moved >= self.STUCK_DISTANCE:
-                    self.stuck_reference_x = self.x
-                    self.stuck_reference_y = self.y
-                    self.stuck_reference_time = now
-
         except Exception as error:
             new_failure = self.tf_ok or self.tf_error == 'not_checked'
             self.tf_ok = False
@@ -399,7 +372,7 @@ class Navigation(LifecycleNode):
         self.get_logger().info(
             f'Map buffered: {msg.info.width}x{msg.info.height}, '
             f'resolution={msg.info.resolution:.3f} - '
-            f'will apply on next replan'
+            f'will apply on next navigation tick'
         )
         self._pending_map = pending
 
@@ -535,6 +508,9 @@ class Navigation(LifecycleNode):
 
         msg = TargetVector()
 
+        if self._pending_map is not None:
+            self._apply_pending_map()
+
         readiness_status = self.readiness_status()
         if readiness_status is not None:
             self.get_logger().debug(
@@ -571,25 +547,6 @@ class Navigation(LifecycleNode):
             return
 
         replan_reason = self.replan_reason(start, goal)
-
-        # Apply buffered map when replanning is triggered
-        if replan_reason is not None and self._pending_map is not None:
-            self._apply_pending_map()
-            start = self.world_to_grid(self.x, self.y)
-            goal = self.world_to_grid(self.goal_x, self.goal_y)
-            if start is None or goal is None:
-                self.get_logger().warning(
-                    f'After map update, pose or goal outside bounds: '
-                    f'start={start} goal={goal}'
-                )
-                self.clear_planned_path()
-                self.publisher.publish(msg)
-                self.set_status(
-                    'outside_map',
-                    self.outside_map_reason(start, goal),
-                )
-                return
-            replan_reason = 'map updated'
 
         if replan_reason is not None:
             self.get_logger().info(
@@ -633,26 +590,6 @@ class Navigation(LifecycleNode):
                 'no_path',
                 self.no_path_reason(start, goal),
             )
-            return
-
-        stuck = self.robot_is_stuck()
-        if stuck and not self.WAS_STUCK:
-            self.get_logger().warning("Robot is stuck")
-            if self.REPLAN_ON_STUCK:
-                self.WAS_STUCK = True
-                self.clear_planned_path(reset_planning_context=True)
-                return
-            else:
-                self.WAS_STUCK = True
-                self.set_status("stuck", "robot_not_moving")
-
-        if not stuck:
-            self.WAS_STUCK = False
-
-        if stuck and not self.REPLAN_ON_STUCK:
-            msg.linear = 0.0
-            msg.angular = 0.0
-            self.publisher.publish(msg)
             return
 
         waypoint = self.next_waypoint()
@@ -1072,14 +1009,6 @@ class Navigation(LifecycleNode):
 
     def clamp(self, value, minimum, maximum):
         return max(minimum, min(value, maximum))
-
-    def robot_is_stuck(self):
-        if self.stuck_reference_time is None:
-            return False
-        return (
-            self.now_seconds() - self.stuck_reference_time
-            > self.STUCK_TIMEOUT
-        )
 
 
 def main():
