@@ -7,6 +7,7 @@ from std_msgs.msg import String, Bool
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
+from collision_interfaces.msg import TargetVector
 import base64
 import json
 import subprocess
@@ -175,6 +176,18 @@ class DashboardBackendNode(Node):
         except ImportError:
             self.get_logger().warn('tf2_msgs not available, robot pose disabled')
 
+        self.latest_nav_status = None
+        self.create_subscription(
+            String, '/navigation_status', self.nav_status_callback, 10)
+
+        self.latest_exp_status = None
+        self.create_subscription(
+            String, '/exploration_status', self.exp_status_callback, 10)
+
+        self.latest_target_vector = None
+        self.create_subscription(
+            TargetVector, '/target_vector', self.target_vector_callback, 10)
+
         self.goal_pub = self.create_publisher(
             PoseStamped, '/goal_pose', 10)
 
@@ -285,6 +298,9 @@ class DashboardBackendNode(Node):
             "robot_pose": self.latest_robot_pose,
             "path": self.latest_path,
             "goal": self.latest_goal,
+            "navigation_status": self.latest_nav_status,
+            "exploration_status": self.latest_exp_status,
+            "target_vector": self.latest_target_vector,
         }
 
     def get_map(self):
@@ -516,6 +532,15 @@ class DashboardBackendNode(Node):
             'x': msg.pose.position.x, 'y': msg.pose.position.y,
             'qz': msg.pose.orientation.z, 'qw': msg.pose.orientation.w
         }
+
+    def nav_status_callback(self, msg):
+        self.latest_nav_status = msg.data
+
+    def exp_status_callback(self, msg):
+        self.latest_exp_status = msg.data
+
+    def target_vector_callback(self, msg):
+        self.latest_target_vector = {'linear': msg.linear, 'angular': msg.angular}
 
     def command_callback(self, msg):
         """Callback für Befehle aus der Web-GUI mit Schutz-Matrix & State-Machine."""
