@@ -90,13 +90,14 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 1.5          # seconds
-        self.STUCK_DISTANCE = 0.1        # meters
+        self.STUCK_TIMEOUT = 7.0          # seconds
+        self.STUCK_DISTANCE = 0.2        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
         self.stuck_reference_time = None
         self.WAS_STUCK = False
+        self.STUCK_TOGGLE = False
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
@@ -503,6 +504,8 @@ class Navigation(LifecycleNode):
         self.last_goal_time = self.now_seconds()
         self.clear_planned_path(reset_planning_context=True)
 
+        self.STUCK_TOGGLE = False
+
     def publish_planned_path(self):
         if not self.path_publisher.is_activated:
             return
@@ -549,6 +552,7 @@ class Navigation(LifecycleNode):
         if reset_planning_context:
             self._last_planning_context = None
         self.publish_planned_path()
+        self.STUCK_TOGGLE = True
 
     def smooth_path(self, path):
         if len(path) <= 2:
@@ -676,13 +680,14 @@ class Navigation(LifecycleNode):
             # --- NEUE LOGIK ---
             # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches
             # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
-            self.stuck_reference_x = self.x
-            self.stuck_reference_y = self.y
-            self.stuck_reference_time = self.now_seconds()
-            self.WAS_STUCK = False
+            #self.stuck_reference_x = self.x
+            #self.stuck_reference_y = self.y
+            #self.stuck_reference_time = self.now_seconds()
+            #self.WAS_STUCK = False
             # ------------------
 
             self.publish_planned_path()
+            self.STUCK_TOGGLE = True
 
         if not self.path:
             self.get_logger().warning(
@@ -694,7 +699,8 @@ class Navigation(LifecycleNode):
                 self.no_path_reason(start, goal),
             )
             return
-
+        
+#        if self.STUCK_TOGGLE:
         stuck = self.robot_is_stuck()
         if stuck and not self.WAS_STUCK:
             self.get_logger().warning("Robot is stuck")
@@ -703,10 +709,8 @@ class Navigation(LifecycleNode):
             if self.REPLAN_ON_STUCK:
                 self.clear_planned_path(reset_planning_context=True)
                 return
-
         if not stuck:
             self.WAS_STUCK = False
-
         if stuck and not self.REPLAN_ON_STUCK:
             msg.linear = 0.0
             msg.angular = 0.0

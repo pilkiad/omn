@@ -42,7 +42,7 @@ class Exploration(LifecycleNode):
         self.status_publisher = self.create_lifecycle_publisher(String, "/exploration_status", 1)
         self.map_subscription = self.create_subscription(OccupancyGrid, '/map', self.map_callback, 1)
         self.target_vector_subscription = self.create_subscription(TargetVector, '/target_vector', self.target_vector_callback, 1)
-        self.exploration_time = self.create_timer(10, self.exploration_callback)
+        self.exploration_time = self.create_timer(30, self.exploration_callback)
         self.marker_pub = self.create_lifecycle_publisher(MarkerArray, '/exploration_markers', 1)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -147,20 +147,21 @@ class Exploration(LifecycleNode):
     def exploration_callback(self):
         if self.env_map is None:
             self.get_logger().warn("Cannot explore: no current map")
-            self.set_status('inactive')
+            self.set_status('inactive (no map)')
             return
         if self.our_position is None:
             self.get_logger().warn("Cannot explore: no current position")
-            self.set_status('inactive')
+            self.set_status('inactive (no position)')
             return
         if self.target_vector != [ 0.0, 0.0 ]:
             self.get_logger().info("Waiting for standstill...")
-            self.set_status('waiting_for_standstill')
+            self.set_status('waiting for standstill')
             return
         if not self.publisher.is_activated:
-            self.set_status('inactive')
+            self.set_status('inactive (not activated)')
             return
 
+        self.set_status('exploring')
         self.flood_fill()
         self.get_logger().info("Searching for best exploration spot...")
 
@@ -241,10 +242,8 @@ class Exploration(LifecycleNode):
 
         if closest_position is None:
             self.get_logger().info("Cannot explore: no suitable position")
-            self.set_status('inactive')
+            self.set_status('no position found')
             return
-
-        self.set_status('exploring')
 
         # Send the desired position over to navigation
         self.marker_positions = target_positions
