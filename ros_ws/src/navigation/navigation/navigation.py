@@ -179,22 +179,33 @@ class Navigation(LifecycleNode):
             self.last_pose_time = self.now_seconds()
 
             now = self.now_seconds()
-            if self.stuck_reference_time is None:
+
+            # --- NEUE UNSTUCK LOGIK ---
+            # Timer immer auf 'jetzt' einfrieren, wenn wir nicht AKTIV navigieren.
+            # Dadurch verhindern wir, dass der Roboter beim Planen oder Warten
+            # fälschlicherweise als "feststeckend" markiert wird.
+            if self.state not in ('tracking', 'stuck') or not self.path:
                 self.stuck_reference_x = self.x
                 self.stuck_reference_y = self.y
                 self.stuck_reference_time = now
             else:
-                moved = self.distance(
-                    self.x,
-                    self.y,
-                    self.stuck_reference_x,
-                    self.stuck_reference_y,
-                )
-
-                if moved >= self.STUCK_DISTANCE:
+                if self.stuck_reference_time is None:
                     self.stuck_reference_x = self.x
                     self.stuck_reference_y = self.y
                     self.stuck_reference_time = now
+                else:
+                    moved = self.distance(
+                        self.x,
+                        self.y,
+                        self.stuck_reference_x,
+                        self.stuck_reference_y,
+                    )
+
+                    if moved >= self.STUCK_DISTANCE:
+                        self.stuck_reference_x = self.x
+                        self.stuck_reference_y = self.y
+                        self.stuck_reference_time = now
+            # --------------------------
 
         except Exception as error:
             new_failure = self.tf_ok or self.tf_error == 'not_checked'
@@ -487,6 +498,8 @@ class Navigation(LifecycleNode):
 
         self.path_publisher.publish(msg)
 
+        self.WAS_STUCK = False
+
     def clear_planned_path(self, reset_planning_context=False):
         self.get_logger().debug(
             f'Clearing planned path ({len(self.path)} waypoints), '
@@ -496,6 +509,19 @@ class Navigation(LifecycleNode):
         self.path_grid = []
         self.last_planned_start = None
         self.last_planned_goal = None
+
+        # --- NEUE LOGIK ---
+        # Ohne Pfad kann sich der Roboter nicht festfahren.
+        # Timer vorsichtshalber zurücksetzen.
+        self.stuck_reference_x = self.x
+        self.stuck_reference_y = self.y
+        try:
+            self.stuck_reference_time = self.now_seconds()
+        except:
+            self.stuck_reference_time = None
+        self.WAS_STUCK = False
+        # ------------------
+
         if reset_planning_context:
             self._last_planning_context = None
         self.publish_planned_path()
@@ -622,6 +648,16 @@ class Navigation(LifecycleNode):
             self.path_progress = 0.0
             self.last_planned_start = start
             self.last_planned_goal = goal
+
+            # --- NEUE LOGIK ---
+            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches 
+            # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
+            self.stuck_reference_x = self.x
+            self.stuck_reference_y = self.y
+            self.stuck_reference_time = self.now_seconds()
+            self.WAS_STUCK = False
+            # ------------------
+
             self.publish_planned_path()
 
         if not self.path:
@@ -1074,8 +1110,11 @@ class Navigation(LifecycleNode):
         return max(minimum, min(value, maximum))
 
     def robot_is_stuck(self):
-        if self.stuck_reference_time is None:
+        # --- NEUE LOGIK ---
+        # Sofortiger Abbruch der Prüfung, wenn wir keinen Pfad haben.
+        if self.stuck_reference_time is None or not self.path:
             return False
+        # ------------------
         return (
             self.now_seconds() - self.stuck_reference_time
             > self.STUCK_TIMEOUT
