@@ -172,6 +172,8 @@
         #exp-msg.state-waiting .exp-tag { background: rgba(234,179,8,0.22); }
         #exp-msg.state-exploring { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.35); color: #16a34a; box-shadow: 0 6px 30px rgba(34,197,94,0.15); }
         #exp-msg.state-exploring .exp-tag { background: rgba(34,197,94,0.22); }
+        #exp-msg.state-error { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.35); color: #dc2626; box-shadow: 0 6px 30px rgba(239,68,68,0.15); }
+        #exp-msg.state-error .exp-tag { background: rgba(239,68,68,0.22); }
 
         #tv-msg {
             position: fixed;
@@ -1311,7 +1313,8 @@
                 if (expStatus) {
                     const es = expStatus.toLowerCase();
                     if (es === 'exploring') expMsg.classList.add('state-exploring');
-                    else if (es === 'waiting_for_standstill') expMsg.classList.add('state-waiting');
+                    else if (es.startsWith('waiting')) expMsg.classList.add('state-waiting');
+                    else if (es === 'no position found') expMsg.classList.add('state-error');
                     else expMsg.classList.add('state-inactive');
                 }
 

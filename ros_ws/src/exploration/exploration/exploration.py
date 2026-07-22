@@ -147,18 +147,18 @@ class Exploration(LifecycleNode):
     def exploration_callback(self):
         if self.env_map is None:
             self.get_logger().warn("Cannot explore: no current map")
-            self.set_status('inactive')
+            self.set_status('inactive (no map)')
             return
         if self.our_position is None:
             self.get_logger().warn("Cannot explore: no current position")
-            self.set_status('inactive')
+            self.set_status('inactive (no position)')
             return
         if self.target_vector != [ 0.0, 0.0 ]:
             self.get_logger().info("Waiting for standstill...")
-            self.set_status('waiting_for_standstill')
+            self.set_status('waiting for standstill')
             return
         if not self.publisher.is_activated:
-            self.set_status('inactive')
+            self.set_status('inactive (not activated)')
             return
 
         self.set_status('exploring')
@@ -242,7 +242,7 @@ class Exploration(LifecycleNode):
 
         if closest_position is None:
             self.get_logger().info("Cannot explore: no suitable position")
-            self.set_status('inactive')
+            self.set_status('no position found')
             return
 
         # Send the desired position over to navigation
