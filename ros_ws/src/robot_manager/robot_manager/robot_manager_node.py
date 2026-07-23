@@ -78,10 +78,16 @@ class RobotManagerNode(Node):
     # by a Task button, stopped automatically on cancel/estop/completion).
     TASK_LAUNCH_CMDS = {
         TASK_FOLLOW_RED: ['ros2', 'launch', 'follow_red',
-                          'follow_red_with_avoidance.launch.py'],
+                          'follow_red_with_navigation.launch.py'],
         TASK_EXPLORE: ['ros2', 'launch', 'exploration',
                        'blind_exploration.launch.py'],
     }
+    # Used instead of TASK_LAUNCH_CMDS[TASK_EXPLORE] once a map already
+    # exists (self.map_saved) — see _explore_cmd(). This one needs /map to
+    # find unexplored frontiers, and bundles navigation + collision_avoidance
+    # itself (same conflict rules as follow_red apply).
+    EXPLORE_WITH_MAP_CMD = ['ros2', 'launch', 'exploration',
+                           'exploration.launch.py']
 
     def __init__(self):
         super().__init__('robot_manager')
@@ -96,7 +102,7 @@ class RobotManagerNode(Node):
         self.slam = SlamMetrics(convergence_threshold=0.97, hold_seconds=5.0)
 
         self.health.add_component('scan', 'LiDAR /scan', 10.0, 1.5, 4.0, critical=True)
-        self.health.add_component('pose', 'Localization /pose', 10.0, 1.5, 4.0, critical=True)
+        self.health.add_component('pose', 'Localization /pose', 1.0, 3.0, 8.0, critical=True)
         self.health.add_component('map', 'SLAM map /map', 0.5, 8.0, 20.0)
         self.health.add_component('slam_confidence', 'SLAM analyzer', 0.5, 8.0, 20.0)
         # planner and motors are event-driven: they only publish while a task
@@ -291,8 +297,9 @@ class RobotManagerNode(Node):
         except Exception:
             pass
 
-    def _start_task_proc(self, task_type):
-        cmd = self.TASK_LAUNCH_CMDS[task_type]
+    def _start_task_proc(self, task_type, cmd=None):
+        if cmd is None:
+            cmd = self.TASK_LAUNCH_CMDS[task_type]
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
         self._task_proc = proc
@@ -514,15 +521,33 @@ class RobotManagerNode(Node):
             task = self.tasks.start(task_type)
             if task is None:
                 return {'ok': False, 'error': 'another task is active'}
+            # Both blind_exploration.launch.py and follow_red_with_navigation
+            # .launch.py bring up their own collision_avoidance node (and
+            # follow_red brings its own navigation node too) — same node
+            # names as the Stack panel's "Navigation + collision avoidance"
+            # button. Running both at once causes duplicate-node conflicts,
+            # so make sure that stack component is stopped before we start
+            # this task's own copy.
+            self._stop_stack('navigation')
             # Start the matching pipeline (see TASK_LAUNCH_CMDS). It drives
             # the base on its own until cancelled/estopped/it exits.
+            # Explore specifically: pick blind (no map needed) vs the
+            # frontier-based exploration (needs an existing /map) depending
+            # on whether a map has actually been built/saved yet.
+            explore_cmd = None
+            used_map_exploration = False
+            if action == 'explore' and self.map_saved:
+                explore_cmd = self.EXPLORE_WITH_MAP_CMD
+                used_map_exploration = True
             try:
-                self._start_task_proc(task_type)
+                self._start_task_proc(task_type, cmd=explore_cmd)
             except OSError as error:
                 self.tasks.fail('could not start {}: {}'.format(action, error))
                 return {'ok': False,
                         'error': 'could not start {}: {}'.format(action, error)}
-            self.tasks.update_progress(0.0, 'starting…')
+            start_note = ('starting (map-based exploration)…'
+                          if used_map_exploration else 'starting…')
+            self.tasks.update_progress(0.0, start_note)
             if self.lifecycle.state == RobotState.READY:
                 self.lifecycle.handle(RobotEvent.TASK_STARTED)
             self.get_logger().info('%s pipeline started (pid %d)'
@@ -593,6 +618,11 @@ class RobotManagerNode(Node):
             if name not in self.LAUNCH_TARGETS:
                 return {'ok': False,
                         'error': 'unknown stack target: {}'.format(name)}
+            if (action == 'start_stack' and name == 'navigation'
+                    and self._task_proc_type in (TASK_FOLLOW_RED, TASK_EXPLORE)):
+                return {'ok': False,
+                        'error': ('cancel the active task first — it already '
+                                  'owns navigation/collision_avoidance')}
             try:
                 if action == 'start_stack':
                     self._start_stack(name)
