@@ -8,22 +8,22 @@ In ros_ws directory
 The node is installed as:
 
 ```bash
-ros2 run navigation navigation
+ros2 run navigation2 navigation2
 ```
 
 In the Gazebo smoke setup, it is launched by:
 
 ```bash
-ros2 launch navigation_gazebo nav_smoke_gazebo.launch.py
+ros2 launch navigation_gazebo2 nav_smoke_gazebo.launch.py
 ```
 
 With both gazebo and rviz(while only rebuilding navigation):
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select navigation --symlink-install
+colcon build --packages-select navigation2 --symlink-install
 source install/setup.bash
-ros2 launch navigation_gazebo nav_smoke_gazebo.launch.py gui:=true rviz:=true
+ros2 launch navigation_gazebo2 nav_smoke_gazebo2.launch.py gui:=true rviz:=true
 ```
 
 ## What The Node Does
