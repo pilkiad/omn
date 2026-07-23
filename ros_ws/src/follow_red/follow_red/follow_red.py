@@ -2,6 +2,8 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode
 from collision_interfaces.msg import TargetVector
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
+from tf2_ros import Buffer, TransformListener
 import cv2
 import numpy as np
 import math
@@ -25,6 +27,7 @@ class CubeWaypointNode(LifecycleNode):
         self.video_writer = None
         self.publisher_ = None
         self.goal_pose_publisher_ = None
+        self.status_publisher = None
         self.timer = None
 
         # Camera frame settings
@@ -60,11 +63,19 @@ class CubeWaypointNode(LifecycleNode):
         self.path_x = []
         self.path_y = []
 
+        # Navigation status subscription
+        self.nav_status = None
+
+        # Robot pose via TF
+        self.robot_x = 0.0
+        self.robot_y = 0.0
+        self.has_robot_pose = False
+        self.tf_buffer = Buffer()
+        self.tf_listener = None
+
         # Throttled logging
         self._frame_count = 0
         self._log_interval = 40  # log every 40 frames (~2s at 20Hz)
-
-        self.once: bool = False
 
         self.get_logger().info(
             f'[__init__] Cube Node created (state=unconfigured). Modus: '
@@ -114,10 +125,22 @@ class CubeWaypointNode(LifecycleNode):
             self.goal_pose_publisher_ = self.create_lifecycle_publisher(PoseStamped, '/goal_pose', 10)
             self.publisher_ = None
 
+        self.get_logger().info('on_configure: creating status publisher on /follow_red_status ...')
+        self.status_publisher = self.create_lifecycle_publisher(String, '/follow_red_status', 10)
+
+        self.get_logger().info('on_configure: subscribing to /navigation_status ...')
+        self.nav_status_sub = self.create_subscription(
+            String, '/navigation_status', self.nav_status_callback, 10)
+
+        self.get_logger().info('on_configure: starting TF listener ...')
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_timer = self.create_timer(0.1, self.get_tf)
+
         self.get_logger().info('on_configure: publisher created, creating timer ...')
         self.timer = self.create_timer(0.05, self.process_image_loop)
 
         self.get_logger().info('on_configure: SUCCESS - Lifecycle Node configured.')
+        self._publish_status('configured')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def on_activate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
@@ -133,13 +156,21 @@ class CubeWaypointNode(LifecycleNode):
             f'(exists={self.publisher_ is not None or self.goal_pose_publisher_ is not None})'
         )
 
+        self._publish_status('active')
         return super().on_activate(state)
 
     def on_deactivate(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
         self.get_logger().info('Lifecycle Node deactivated.')
+        self._publish_status('inactive')
         return super().on_deactivate(state)
 
     def _cleanup_resources(self):
+        if hasattr(self, 'nav_status_sub') and self.nav_status_sub is not None:
+            self.destroy_subscription(self.nav_status_sub)
+            self.nav_status_sub = None
+        if hasattr(self, 'tf_timer') and self.tf_timer is not None:
+            self.destroy_timer(self.tf_timer)
+            self.tf_timer = None
         if self.timer is not None:
             self.destroy_timer(self.timer)
             self.timer = None
@@ -149,6 +180,9 @@ class CubeWaypointNode(LifecycleNode):
         if self.goal_pose_publisher_ is not None:
             self.destroy_lifecycle_publisher(self.goal_pose_publisher_)
             self.goal_pose_publisher_ = None
+        if self.status_publisher is not None:
+            self.destroy_lifecycle_publisher(self.status_publisher)
+            self.status_publisher = None
         if self.video_writer is not None:
             self.video_writer.release()
             self.video_writer = None
@@ -158,11 +192,13 @@ class CubeWaypointNode(LifecycleNode):
         cv2.destroyAllWindows()
 
     def on_cleanup(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
+        self._publish_status('unconfigured')
         self._cleanup_resources()
         self.get_logger().info('Lifecycle Node cleaned up.')
         return rclpy.lifecycle.TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state) -> rclpy.lifecycle.TransitionCallbackReturn:
+        self._publish_status('shutdown')
         self._cleanup_resources()
         if self.path_x:
             self.plot_data()
@@ -193,6 +229,32 @@ class CubeWaypointNode(LifecycleNode):
         delta_x = filtered_cx - self.screen_center_x
         angle_deg = (delta_x / self.screen_center_x) * (self.fov_h_deg / 2.0)
         return -math.radians(angle_deg)
+
+    def nav_status_callback(self, msg):
+        self.nav_status = msg.data
+
+    def get_tf(self):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map', 'base_footprint', rclpy.time.Time())
+            self.robot_x = transform.transform.translation.x
+            self.robot_y = transform.transform.translation.y
+            self.has_robot_pose = True
+        except Exception:
+            pass
+
+    def _navigation_ready_for_goal(self) -> bool:
+        """Navigation is ready to accept a new goal_pose."""
+        if self.nav_status is None:
+            return True  # no status yet, assume ready
+        return self.nav_status in ('idle', 'goal_succeeded', 'no_path',
+                                   'outside_map', 'stuck')
+
+    def _publish_status(self, status: str):
+        if self.status_publisher is not None and self.status_publisher.is_activated:
+            msg = String()
+            msg.data = status
+            self.status_publisher.publish(msg)
 
     def update_target(self, x: float, w: float, current_area: float) -> tuple[float, float]:
         raw_cx = x + (w / 2.0)
@@ -278,27 +340,39 @@ class CubeWaypointNode(LifecycleNode):
                         f'area={current_area:.0f}px, distance={smooth_distance:.2f}m, angle={math.degrees(smooth_angle):.1f}°'
                     )
 
-                should_send = False
-                if self.last_sent_x is None or self.last_sent_y is None:
-                    should_send = True
-                else:
-                    move_distance = math.hypot(smooth_x - self.last_sent_x, smooth_y - self.last_sent_y)
-                    if move_distance >= self.MOVEMENT_THRESHOLD:
-                        should_send = True
-
-                if should_send:
-                    self.last_sent_x = smooth_x
-                    self.last_sent_y = smooth_y
-
-                    if self.send_polar_instead_of_xy:
+                if self.send_polar_instead_of_xy:
+                    # Polar mode: deadband prevents flooding /target_vector
+                    if self.last_sent_x is not None and self.last_sent_y is not None:
+                        move_distance = math.hypot(smooth_x - self.last_sent_x, smooth_y - self.last_sent_y)
+                        if move_distance < self.MOVEMENT_THRESHOLD:
+                            if throttled:
+                                self.get_logger().info(f'[frame={self._frame_count}] Target movement within deadband. Skipping publish.')
+                            # still draw the overlay below
+                        else:
+                            self.last_sent_x = smooth_x
+                            self.last_sent_y = smooth_y
+                            val_linear = smooth_distance
+                            val_angular = smooth_angle
+                            self._publish_status(f'tracking: lin={val_linear:.2f}, ang={math.degrees(val_angular):.0f}°')
+                    else:
+                        self.last_sent_x = smooth_x
+                        self.last_sent_y = smooth_y
                         val_linear = smooth_distance
                         val_angular = smooth_angle
-                    else:
+                        self._publish_status(f'tracking: lin={val_linear:.2f}, ang={math.degrees(val_angular):.0f}°')
+                else:
+                    # XY mode: no deadband; navigation-gating decides when to send.
+                    if self._navigation_ready_for_goal():
                         val_linear = smooth_x
                         val_angular = smooth_y
-                else:
-                    if throttled:
-                        self.get_logger().info(f'[frame={self._frame_count}] Target movement within deadband. Skipping publish.')
+                        self._publish_status(f'goal_pose: x={val_linear:.2f}, y={val_angular:.2f}')
+                    else:
+                        if throttled:
+                            self.get_logger().info(
+                                f'[frame={self._frame_count}] Navigation busy (nav_status={self.nav_status}), '
+                                f'deferring goal_pose: x={smooth_x:.2f}, y={smooth_y:.2f}'
+                            )
+                        self._publish_status(f'waiting_nav: goal x={smooth_x:.2f},y={smooth_y:.2f}')
 
                 overlay_text = f"X: {smooth_x:.2f}m, Y: {smooth_y:.2f}m" if not self.send_polar_instead_of_xy else f"Lin: {smooth_distance:.2f}m, Ang: {math.degrees(smooth_angle):.1f}°"
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
@@ -318,8 +392,10 @@ class CubeWaypointNode(LifecycleNode):
                     f'[frame={self._frame_count}] {len(contours)} contour(s) found, '
                     f'largest area={max_area:.0f}px (< 500 threshold)'
                 )
+                self._publish_status('searching')
         elif throttled and not contours:
             self.get_logger().info(f'[frame={self._frame_count}] No red contours detected')
+            self._publish_status('searching')
 
         if self.video_writer is not None:
             self.video_writer.write(frame)
@@ -343,20 +419,37 @@ class CubeWaypointNode(LifecycleNode):
                     f'[frame={self._frame_count}] Cannot publish: self.publisher_ is None!'
                 )
         else:
-            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated and not self.once:
-                self.once = True
+            if not self.has_robot_pose:
+                if throttled:
+                    self.get_logger().warn(
+                        f'[frame={self._frame_count}] No robot pose yet, cannot compute global goal'
+                    )
+                self._publish_status('no robot pose')
+                return
+            if not self._navigation_ready_for_goal():
+                if throttled:
+                    self.get_logger().info(
+                        f'[frame={self._frame_count}] Navigation busy (nav_status={self.nav_status}), '
+                        f'holding goal_pose: rel=({val_linear:.2f},{val_angular:.2f})'
+                    )
+                self._publish_status(f'waiting_nav: goal x={val_linear:.2f},y={val_angular:.2f}')
+                return
+            if self.goal_pose_publisher_ is not None and self.goal_pose_publisher_.is_activated:
+                # Convert relative (robot-frame) coords to global map coords
+                global_x = self.robot_x + val_linear
+                global_y = self.robot_y + val_angular
                 msg = PoseStamped()
-                msg.header.frame_id = 'camera_link'
+                msg.header.frame_id = 'map'
                 msg.header.stamp = self.get_clock().now().to_msg()
-                msg.pose.position.x = val_linear
-                msg.pose.position.y = val_angular
+                msg.pose.position.x = global_x
+                msg.pose.position.y = global_y
                 msg.pose.position.z = 0.0
                 msg.pose.orientation.w = 1.0
                 self.goal_pose_publisher_.publish(msg)
                 if throttled:
                     self.get_logger().info(
-                        f'[frame={self._frame_count}] PUBLISHED to /goal_pose: '
-                        f'x={val_linear:.2f}m, y={val_angular:.2f}m'
+                        f'[frame={self._frame_count}] PUBLISHED to /goal_pose (map): '
+                        f'global=({global_x:.2f},{global_y:.2f})  rel=({val_linear:.2f},{val_angular:.2f})'
                     )
             elif throttled:
                 self.get_logger().error(
