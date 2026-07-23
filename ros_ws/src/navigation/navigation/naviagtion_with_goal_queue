@@ -1,3 +1,4 @@
+from collections import deque
 import heapq
 import math
 
@@ -54,6 +55,12 @@ class Navigation(LifecycleNode):
         self.has_goal = False
         self.last_goal_time = None
 
+        # FIFO queue for tracking waypoints.
+        self.goal_queue = deque()
+        self.last_received_goal = None
+        self.MIN_GOAL_SPACING = 0.25
+        self.MAX_GOAL_QUEUE_SIZE = 100
+
         self.path = []
         self.path_grid = []
         self.path_progress = 0.0
@@ -90,18 +97,13 @@ class Navigation(LifecycleNode):
         self.SMOOTH_TOLERANCE = 1e-10
         self.SMOOTH_REFINEMENTS = 2
 
-        self.STUCK_TIMEOUT = 5.0          # seconds
-        self.STUCK_DISTANCE = 1.0        # meters
+        self.STUCK_TIMEOUT = 3.0          # seconds
+        self.STUCK_DISTANCE = 0.05        # meters
         self.REPLAN_ON_STUCK = False       # set false to stop instead
         self.stuck_reference_x = None
         self.stuck_reference_y = None
         self.stuck_reference_time = None
         self.WAS_STUCK = False
-        self.STUCK_TOGGLE = False
-        self.speed_threshold = 0.1 # smaller = more sensitive (0.05) , bigger = less sensitive (0.2)
-
-        self.global_linear = 0
-        self.global_angular = 0
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self.get_logger().info("Configuring navigation node")
@@ -260,6 +262,7 @@ class Navigation(LifecycleNode):
             'has_map': self.has_map,
             'has_pose': self.has_pose,
             'has_goal': self.has_goal,
+            'queued_goals': len(self.goal_queue),
             'ready_to_plan': self.ready_to_plan(),
             'start_cell': start_cell,
             'pose_age_sec': self.age_seconds(self.last_pose_time, now),
@@ -280,6 +283,8 @@ class Navigation(LifecycleNode):
                 'has_map',
                 'has_pose',
                 'has_goal',
+            'queued_goals',
+                'queued_goals',
                 'ready_to_plan',
                 'start_cell',
                 'goal_cell',
@@ -502,13 +507,63 @@ class Navigation(LifecycleNode):
             f'New goal received: ({goal_x:.2f},{goal_y:.2f}) '
             f'from frame="{source_frame}"'
         )
+        new_goal = (goal_x, goal_y)
+
+        # Ignore waypoints that are almost identical to the last accepted one.
+        if self.last_received_goal is not None:
+            spacing = self.distance(
+                new_goal[0],
+                new_goal[1],
+                self.last_received_goal[0],
+                self.last_received_goal[1],
+            )
+            if spacing < self.MIN_GOAL_SPACING:
+                self.get_logger().debug(
+                    f'Ignoring duplicate goal; spacing={spacing:.3f}m'
+                )
+                return
+
+        if len(self.goal_queue) >= self.MAX_GOAL_QUEUE_SIZE:
+            self.get_logger().warning(
+                'Goal queue is full. New waypoint rejected.'
+            )
+            return
+
+        self.last_received_goal = new_goal
+
+        # Do not replace the current goal. Add later goals in FIFO order.
+        if self.has_goal:
+            self.goal_queue.append(new_goal)
+            self.get_logger().info(
+                f'Queued goal x={new_goal[0]:.3f}, '
+                f'y={new_goal[1]:.3f}; '
+                f'queue size={len(self.goal_queue)}'
+            )
+            return
+
         self.goal_x = goal_x
         self.goal_y = goal_y
         self.has_goal = True
         self.last_goal_time = self.now_seconds()
         self.clear_planned_path(reset_planning_context=True)
 
-        self.STUCK_TOGGLE = False
+
+    def activate_next_goal(self):
+        if not self.goal_queue:
+            return False
+
+        next_goal = self.goal_queue.popleft()
+        self.goal_x = next_goal[0]
+        self.goal_y = next_goal[1]
+        self.has_goal = True
+        self.last_goal_time = self.now_seconds()
+        self.clear_planned_path(reset_planning_context=True)
+        self.get_logger().info(
+            f'Activated next queued goal x={self.goal_x:.3f}, '
+            f'y={self.goal_y:.3f}; '
+            f'remaining={len(self.goal_queue)}'
+        )
+        return True
 
     def publish_planned_path(self):
         if not self.path_publisher.is_activated:
@@ -528,6 +583,8 @@ class Navigation(LifecycleNode):
             msg.poses.append(pose)
 
         self.path_publisher.publish(msg)
+
+        self.WAS_STUCK = False
 
     def clear_planned_path(self, reset_planning_context=False):
         self.get_logger().debug(
@@ -550,8 +607,6 @@ class Navigation(LifecycleNode):
             self.stuck_reference_time = None
         self.WAS_STUCK = False
         # ------------------
-
-        self.STUCK_TOGGLE = False
 
         if reset_planning_context:
             self._last_planning_context = None
@@ -597,8 +652,21 @@ class Navigation(LifecycleNode):
             self.get_logger().debug(
                 f'Not ready to plan: {readiness_status[1]}'
             )
-            self.STUCK_TOGGLE = False
             self.set_status(*readiness_status)
+            return
+
+        if (
+            self.distance(self.x, self.y, self.goal_x, self.goal_y)
+            <= self.GOAL_TOLERANCE
+            and self.goal_queue
+        ):
+            self.get_logger().info(
+                f'Waypoint reached ({self.goal_x:.2f},{self.goal_y:.2f}) '
+                f'within tolerance {self.GOAL_TOLERANCE:.2f}m'
+            )
+            self.publisher.publish(msg)
+            self.clear_planned_path(reset_planning_context=True)
+            self.activate_next_goal()
             return
 
         if self.distance(self.x, self.y, self.goal_x, self.goal_y) <= self.GOAL_TOLERANCE:
@@ -608,6 +676,7 @@ class Navigation(LifecycleNode):
             )
             self.clear_planned_path()
             self.has_goal = False
+            self.last_received_goal = None
             self.publisher.publish(msg)
             self.set_status('goal_succeeded')
             return
@@ -650,7 +719,6 @@ class Navigation(LifecycleNode):
             replan_reason = 'map updated'
 
         if replan_reason is not None:
-            self.STUCK_TOGGLE = False
             self.get_logger().info(
                 f'Replanning: reason="{replan_reason}" '
                 f'start={start} goal={goal}'
@@ -683,8 +751,8 @@ class Navigation(LifecycleNode):
             self.last_planned_goal = goal
 
             # --- NEUE LOGIK ---
-            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches
-            # Zeitfenster, anstatt Altlasten zu übernehmen.
+            # Nach erfolgreichem Replanning geben wir dem Roboter ein frisches 
+            # Zeitfenster von 3 Sekunden, anstatt Altlasten zu übernehmen.
             self.stuck_reference_x = self.x
             self.stuck_reference_y = self.y
             self.stuck_reference_time = self.now_seconds()
@@ -692,10 +760,8 @@ class Navigation(LifecycleNode):
             # ------------------
 
             self.publish_planned_path()
-            self.STUCK_TOGGLE = True
 
         if not self.path:
-            self.STUCK_TOGGLE = False
             self.get_logger().warning(
                 f'No path available: reason="{self.no_path_reason(start, goal)}"'
             )
@@ -706,27 +772,26 @@ class Navigation(LifecycleNode):
             )
             return
 
-        if self.STUCK_TOGGLE:
-            stuck = self.robot_is_stuck()
-            if stuck and not self.WAS_STUCK:
-                self.get_logger().warning("Robot is stuck")
-                self.WAS_STUCK = True
-                self.set_status('stuck', 'robot_not_moving')
-                if self.REPLAN_ON_STUCK:
-                    self.clear_planned_path(reset_planning_context=True)
-                    return
-            if not stuck:
-                self.WAS_STUCK = False
-            if stuck and not self.REPLAN_ON_STUCK:
-                msg.linear = 0.0
-                msg.angular = 0.0
-                self.publisher.publish(msg)
+        stuck = self.robot_is_stuck()
+        if stuck and not self.WAS_STUCK:
+            self.get_logger().warning("Robot is stuck")
+            self.WAS_STUCK = True
+            self.set_status('stuck', 'robot_not_moving')
+            if self.REPLAN_ON_STUCK:
+                self.clear_planned_path(reset_planning_context=True)
                 return
+
+        if not stuck:
+            self.WAS_STUCK = False
+
+        if stuck and not self.REPLAN_ON_STUCK:
+            msg.linear = 0.0
+            msg.angular = 0.0
+            self.publisher.publish(msg)
+            return
 
         waypoint = self.next_waypoint()
         linear, angular = self.target_vector_to_waypoint(waypoint)
-        self.global_linear = linear
-        self.global_angular = angular
         msg.linear = linear
         msg.angular = angular
         self.publisher.publish(msg)
@@ -1148,7 +1213,8 @@ class Navigation(LifecycleNode):
         # Sofortiger Abbruch der Prüfung, wenn wir keinen Pfad haben.
         if self.stuck_reference_time is None or not self.path:
             return False
-        if abs(self.global_linear) + abs(self.global_angular) > self.speed_threshold:
+        if (abs(angular) + abs(linear)) > 0.01:
+            self.stuck_reference_time = self.now_seconds()
             return False
         # ------------------
         return (
